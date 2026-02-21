@@ -22,6 +22,7 @@ interface GroupState {
   containerName: string | null;
   groupFolder: string | null;
   retryCount: number;
+  abortRequested: boolean;
 }
 
 export class GroupQueue {
@@ -43,6 +44,7 @@ export class GroupQueue {
         containerName: null,
         groupFolder: null,
         retryCount: 0,
+        abortRequested: false,
       };
       this.groups.set(groupJid, state);
     }
@@ -91,8 +93,15 @@ export class GroupQueue {
     }
 
     if (state.active) {
+      // Preempt idle container for scheduled tasks to prevent indefinite deferral.
+      // The container will exit gracefully via waitForIpcMessage() checking _close sentinel,
+      // then drainGroup() will pick up this pending task.
+      this.closeStdin(groupJid);
       state.pendingTasks.push({ id: taskId, groupJid, fn });
-      logger.debug({ groupJid, taskId }, 'Container active, task queued');
+      logger.debug(
+        { groupJid, taskId },
+        'Container active, preempting with close sentinel for scheduled task',
+      );
       return;
     }
 
@@ -112,7 +121,12 @@ export class GroupQueue {
     this.runTask(groupJid, { id: taskId, groupJid, fn });
   }
 
-  registerProcess(groupJid: string, proc: ChildProcess, containerName: string, groupFolder?: string): void {
+  registerProcess(
+    groupJid: string,
+    proc: ChildProcess,
+    containerName: string,
+    groupFolder?: string,
+  ): void {
     const state = this.getGroup(groupJid);
     state.process = proc;
     state.containerName = containerName;
@@ -157,6 +171,33 @@ export class GroupQueue {
     }
   }
 
+  abortGroup(groupJid: string): boolean {
+    const state = this.getGroup(groupJid);
+    state.abortRequested = true;
+    state.pendingMessages = false;
+    state.pendingTasks = [];
+    state.retryCount = 0;
+    this.closeStdin(groupJid);
+
+    if (!state.process || state.process.killed) {
+      return false;
+    }
+
+    try {
+      state.process.kill('SIGTERM');
+      setTimeout(() => {
+        if (state.process && !state.process.killed) {
+          state.process.kill('SIGKILL');
+        }
+      }, 3000);
+      logger.info({ groupJid, containerName: state.containerName }, 'Abort requested for active group process');
+      return true;
+    } catch (err) {
+      logger.warn({ groupJid, err }, 'Failed to abort active group process');
+      return false;
+    }
+  }
+
   private async runForGroup(
     groupJid: string,
     reason: 'messages' | 'drain',
@@ -176,13 +217,26 @@ export class GroupQueue {
         const success = await this.processMessagesFn(groupJid);
         if (success) {
           state.retryCount = 0;
+          state.abortRequested = false;
         } else {
-          this.scheduleRetry(groupJid, state);
+          if (state.abortRequested) {
+            state.retryCount = 0;
+            state.abortRequested = false;
+            logger.info({ groupJid }, 'Group run aborted, skipping retry');
+          } else {
+            this.scheduleRetry(groupJid, state);
+          }
         }
       }
     } catch (err) {
-      logger.error({ groupJid, err }, 'Error processing messages for group');
-      this.scheduleRetry(groupJid, state);
+      if (state.abortRequested) {
+        state.retryCount = 0;
+        state.abortRequested = false;
+        logger.info({ groupJid }, 'Group run aborted during processing, skipping retry');
+      } else {
+        logger.error({ groupJid, err }, 'Error processing messages for group');
+        this.scheduleRetry(groupJid, state);
+      }
     } finally {
       state.active = false;
       state.process = null;

@@ -6,6 +6,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
@@ -14,6 +15,7 @@ import { CronExpressionParser } from 'cron-parser';
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
+const MEDIA_DIR = path.join(IPC_DIR, 'media');
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
@@ -270,6 +272,121 @@ Use available_groups.json to find the JID for a group. The folder name should be
 
     return {
       content: [{ type: 'text' as const, text: `Group "${args.name}" registered. It will start receiving messages immediately.` }],
+    };
+  },
+);
+
+server.tool(
+  'generate_image',
+  `Generate an image using Google's Imagen API and send it to the chat.
+
+MODEL SELECTION (cost per image):
+• imagen-4.0-fast-generate-001: Fast, good for most requests (~$0.02/image)
+• imagen-4.0-generate-001: Higher quality, better text rendering (~$0.04/image)
+
+Default to "imagen-4.0-fast-generate-001" unless the user explicitly asks for high quality or "best quality".
+
+IMPORTANT:
+• The prompt must be in English. Translate if needed.
+• Be descriptive — Imagen works best with detailed prompts.
+• The generated image is automatically sent to the current chat.`,
+  {
+    prompt: z.string().describe('English description of the image to generate. Be descriptive for best results.'),
+    model: z.enum(['imagen-4.0-generate-001', 'imagen-4.0-fast-generate-001'])
+      .default('imagen-4.0-fast-generate-001')
+      .describe('Imagen model to use'),
+    caption: z.string().optional().describe('Optional caption to send with the image'),
+  },
+  async (args) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return {
+        content: [{ type: 'text' as const, text: 'GEMINI_API_KEY is not configured. Cannot generate images.' }],
+        isError: true,
+      };
+    }
+
+    try {
+      const genai = new GoogleGenAI({ apiKey });
+      const response = await genai.models.generateImages({
+        model: args.model,
+        prompt: args.prompt,
+        config: { numberOfImages: 1 },
+      });
+
+      const image = response.generatedImages?.[0];
+      if (!image?.image?.imageBytes) {
+        return {
+          content: [{ type: 'text' as const, text: 'Image generation returned no results. The prompt may have been blocked by safety filters. Try rephrasing.' }],
+          isError: true,
+        };
+      }
+
+      // Write image to media directory for host-side IPC pickup
+      fs.mkdirSync(MEDIA_DIR, { recursive: true });
+      const imageBuffer = Buffer.from(image.image.imageBytes, 'base64');
+      const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`;
+      const imagePath = path.join(MEDIA_DIR, filename);
+      fs.writeFileSync(imagePath, imageBuffer);
+
+      // Write IPC file to send the image
+      const ipcData = {
+        type: 'send_image',
+        chatJid,
+        imagePath: `/workspace/ipc/media/${filename}`,
+        caption: args.caption || undefined,
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      };
+      writeIpcFile(MESSAGES_DIR, ipcData);
+
+      return {
+        content: [{ type: 'text' as const, text: `Image generated and sent (${args.model}, ${imageBuffer.length} bytes).` }],
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{ type: 'text' as const, text: `Image generation failed: ${msg}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'send_image',
+  'Send an existing image file from the workspace to the chat. Use generate_image for AI-generated images.',
+  {
+    file_path: z.string().describe('Absolute path to the image file inside the container (e.g., /workspace/group/image.png)'),
+    caption: z.string().optional().describe('Optional caption to send with the image'),
+  },
+  async (args) => {
+    if (!fs.existsSync(args.file_path)) {
+      return {
+        content: [{ type: 'text' as const, text: `File not found: ${args.file_path}` }],
+        isError: true,
+      };
+    }
+
+    // Copy file to media directory for IPC
+    fs.mkdirSync(MEDIA_DIR, { recursive: true });
+    const ext = path.extname(args.file_path) || '.png';
+    const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+    const destPath = path.join(MEDIA_DIR, filename);
+    fs.copyFileSync(args.file_path, destPath);
+
+    const ipcData = {
+      type: 'send_image',
+      chatJid,
+      imagePath: `/workspace/ipc/media/${filename}`,
+      caption: args.caption || undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+    writeIpcFile(MESSAGES_DIR, ipcData);
+
+    return {
+      content: [{ type: 'text' as const, text: `Image sent.` }],
     };
   },
 );

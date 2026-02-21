@@ -87,6 +87,10 @@ export interface Channel {
   disconnect(): Promise<void>;
   // Optional: typing indicator. Channels that support it implement it.
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
+  // Optional: send an image with optional caption.
+  sendImage?(jid: string, image: Buffer, caption?: string): Promise<void>;
+  // Optional: metadata sync (used by refresh_groups IPC task).
+  syncGroupMetadata?(force?: boolean): Promise<void>;
 }
 
 // Callback type that channels use to deliver inbound messages

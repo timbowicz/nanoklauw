@@ -1,3 +1,11 @@
 {
-  "mcpServers": {}
+  "mcpServers": {
+    "home-assistant": {
+      "type": "http",
+      "url": "https://bzhqcsakaojlsmesofzesx2k4mwtln9i.ui.nabu.casa/api/mcp",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI4ZGUyMDBhODMyYTc0NTg0OWE5Y2NkYjg5MzAzNjk5YSIsImlhdCI6MTc3MTU4NTExNywiZXhwIjoyMDg2OTQ1MTE3fQ.jbEY296csTZsPnIPlEOBOnkNJ8R8jR23fG9_OE8vMK8"
+      }
+    }
+  }
 }
