@@ -145,7 +145,7 @@ Because I use WhatsApp. Fork it and run a skill to change it. That's the whole p
 
 **Why Docker?**
 
-Docker provides cross-platform support (macOS and Linux), a large ecosystem, and mature tooling.
+Docker provides cross-platform support (macOS and Linux) and a mature ecosystem. On macOS, you can optionally switch to Apple Container via `/convert-to-apple-container` for a lighter-weight native runtime.
 
 **Can I run this on Linux?**
 
