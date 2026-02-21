@@ -120,7 +120,7 @@ export class SlackChannel implements Channel {
           folder,
           trigger: `@${ASSISTANT_NAME}`,
           added_at: new Date().toISOString(),
-          requiresTrigger: false,
+          requiresTrigger: true,
         });
 
         logger.info({ chatJid, channelName, folder }, 'Auto-registered Slack channel as group');

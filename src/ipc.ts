@@ -86,12 +86,20 @@ function canAccessJid(
   return isMain || (!!targetFolder && targetFolder === sourceGroup);
 }
 
-/** Resolve a container-relative IPC path to a host path. */
-function resolveIpcPath(containerPath: string, sourceGroup: string): string {
-  return containerPath.replace(
-    '/workspace/ipc/',
-    path.join(DATA_DIR, 'ipc', sourceGroup) + '/',
-  );
+/** Resolve a container-relative IPC path to a host path.
+ *  Validates the resolved path stays within the group's IPC directory
+ *  to prevent path traversal attacks from container agents. */
+function resolveIpcPath(containerPath: string, sourceGroup: string): string | null {
+  const groupIpcBase = path.resolve(path.join(DATA_DIR, 'ipc', sourceGroup));
+  // Strip the container prefix and resolve relative to the group's IPC dir
+  const relativePart = containerPath.replace(/^\/workspace\/ipc\//, '');
+  const resolved = path.resolve(groupIpcBase, relativePart);
+  // Ensure resolved path is within the group's IPC directory
+  if (!resolved.startsWith(groupIpcBase + path.sep) && resolved !== groupIpcBase) {
+    logger.warn({ containerPath, sourceGroup, resolved }, 'IPC path traversal blocked');
+    return null;
+  }
+  return resolved;
 }
 
 async function handleIpcMessage(
@@ -129,6 +137,7 @@ async function handleIpcImage(
     return;
   }
   const hostImagePath = resolveIpcPath(data.imagePath, sourceGroup);
+  if (!hostImagePath) return;
   if (fs.existsSync(hostImagePath)) {
     const imageBuffer = fs.readFileSync(hostImagePath);
     await deps.sendImage(data.chatJid, imageBuffer, data.caption);
@@ -168,12 +177,15 @@ async function handleIpcDocument(
     return;
   }
   const hostFilePath = resolveIpcPath(data.filePath, sourceGroup);
+  if (!hostFilePath) return;
   if (fs.existsSync(hostFilePath)) {
     const fileBuffer = fs.readFileSync(hostFilePath);
+    // Sanitize filename to prevent path separators in display name
+    const safeFilename = path.basename(data.filename);
     await deps.sendDocument(
       data.chatJid,
       fileBuffer,
-      data.filename,
+      safeFilename,
       data.caption,
     );
     try {
@@ -184,7 +196,7 @@ async function handleIpcDocument(
         chatJid: data.chatJid,
         sourceGroup,
         size: fileBuffer.length,
-        filename: data.filename,
+        filename: safeFilename,
       },
       'IPC document sent',
     );

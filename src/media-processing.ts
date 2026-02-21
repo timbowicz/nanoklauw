@@ -74,7 +74,8 @@ export function writeImageFiles(
     if (!msg.image_data) continue;
 
     const ext = msg.image_data.media_type === 'image/png' ? 'png' : 'jpg';
-    const filename = `${msg.id}.${ext}`;
+    const safeId = msg.id.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const filename = `${safeId}.${ext}`;
     const filepath = path.join(mediaDir, filename);
 
     try {
