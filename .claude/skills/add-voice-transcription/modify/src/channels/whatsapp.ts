@@ -17,6 +17,7 @@ import {
   updateChatName,
 } from '../db.js';
 import { logger } from '../logger.js';
+import { isVoiceMessage, transcribeAudioMessage } from '../transcription.js';
 import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -32,7 +33,6 @@ export class WhatsAppChannel implements Channel {
 
   private sock!: WASocket;
   private connected = false;
-  private reconnecting = false;
   private lidToPhoneMap: Record<string, string> = {};
   private outgoingQueue: Array<{ jid: string; text: string }> = [];
   private flushing = false;
@@ -86,32 +86,21 @@ export class WhatsAppChannel implements Channel {
         logger.info({ reason, shouldReconnect, queuedMessages: this.outgoingQueue.length }, 'Connection closed');
 
         if (shouldReconnect) {
-          if (this.reconnecting) {
-            logger.debug('Reconnect already in progress, skipping');
-            return;
-          }
-          this.reconnecting = true;
-          // Close old socket to prevent conflict loops
-          try { this.sock?.end(undefined); } catch {}
-          logger.info('Reconnecting in 3s...');
-          setTimeout(() => {
-            this.connectInternal().catch((err) => {
-              logger.error({ err }, 'Failed to reconnect, retrying in 5s');
-              setTimeout(() => {
-                this.connectInternal().catch((err2) => {
-                  logger.error({ err: err2 }, 'Reconnection retry failed');
-                  this.reconnecting = false;
-                });
-              }, 5000);
-            });
-          }, 3000);
+          logger.info('Reconnecting...');
+          this.connectInternal().catch((err) => {
+            logger.error({ err }, 'Failed to reconnect, retrying in 5s');
+            setTimeout(() => {
+              this.connectInternal().catch((err2) => {
+                logger.error({ err: err2 }, 'Reconnection retry failed');
+              });
+            }, 5000);
+          });
         } else {
           logger.info('Logged out. Run /setup to re-authenticate.');
           process.exit(0);
         }
       } else if (connection === 'open') {
         this.connected = true;
-        this.reconnecting = false;
         logger.info('Connected to WhatsApp');
 
         // Announce availability so WhatsApp relays subsequent presence updates (typing indicators)
@@ -183,9 +172,6 @@ export class WhatsAppChannel implements Channel {
             msg.message?.videoMessage?.caption ||
             '';
 
-          // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
-          if (!content) continue;
-
           const sender = msg.key.participant || msg.key.remoteJid || '';
           const senderName = msg.pushName || sender.split('@')[0];
 
@@ -198,12 +184,29 @@ export class WhatsAppChannel implements Channel {
             ? fromMe
             : content.startsWith(`${ASSISTANT_NAME}:`);
 
+          // Transcribe voice messages before storing
+          let finalContent = content;
+          if (isVoiceMessage(msg)) {
+            try {
+              const transcript = await transcribeAudioMessage(msg, this.sock);
+              if (transcript) {
+                finalContent = `[Voice: ${transcript}]`;
+                logger.info({ chatJid, length: transcript.length }, 'Transcribed voice message');
+              } else {
+                finalContent = '[Voice Message - transcription unavailable]';
+              }
+            } catch (err) {
+              logger.error({ err }, 'Voice transcription error');
+              finalContent = '[Voice Message - transcription failed]';
+            }
+          }
+
           this.opts.onMessage(chatJid, {
             id: msg.key.id || '',
             chat_jid: chatJid,
             sender,
             sender_name: senderName,
-            content,
+            content: finalContent,
             timestamp,
             is_from_me: fromMe,
             is_bot_message: isBotMessage,
@@ -234,22 +237,6 @@ export class WhatsAppChannel implements Channel {
       // If send fails, queue it for retry on reconnect
       this.outgoingQueue.push({ jid, text: prefixed });
       logger.warn({ jid, err, queueSize: this.outgoingQueue.length }, 'Failed to send, message queued');
-    }
-  }
-
-  async sendImage(jid: string, image: Buffer, caption?: string): Promise<void> {
-    if (!this.connected) {
-      logger.warn({ jid }, 'WA disconnected, cannot send image');
-      return;
-    }
-    try {
-      await this.sock.sendMessage(jid, {
-        image,
-        caption: caption || undefined,
-      });
-      logger.info({ jid, size: image.length, hasCaption: !!caption }, 'Image sent');
-    } catch (err) {
-      logger.warn({ jid, err }, 'Failed to send image');
     }
   }
 

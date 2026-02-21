@@ -1,4 +1,3 @@
-import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -22,6 +21,7 @@ import {
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './container-runner.js';
+import { cleanupOrphans, ensureContainerRuntimeRunning } from './container-runtime.js';
 import {
   getAllChats,
   getAllRegisteredGroups,
@@ -190,6 +190,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();
+    }
+
+    if (result.status === 'success') {
+      queue.notifyIdle(chatJid);
     }
 
     if (result.status === 'error') {
@@ -403,46 +407,13 @@ function recoverPendingMessages(): void {
   }
 }
 
-function ensureDockerRunning(): void {
-  try {
-    execSync('docker info', { stdio: 'pipe', timeout: 10000 });
-    logger.debug('Docker daemon is running');
-  } catch {
-    logger.error('Docker daemon is not running');
-    console.error('\n╔════════════════════════════════════════════════════════════════╗');
-    console.error('║  FATAL: Docker is not running                                  ║');
-    console.error('║                                                                ║');
-    console.error('║  Agents cannot run without Docker. To fix:                     ║');
-    console.error('║  macOS: Start Docker Desktop                                   ║');
-    console.error('║  Linux: sudo systemctl start docker                            ║');
-    console.error('║                                                                ║');
-    console.error('║  Install from: https://docker.com/products/docker-desktop      ║');
-    console.error('╚════════════════════════════════════════════════════════════════╝\n');
-    throw new Error('Docker is required but not running');
-  }
-
-  // Kill and clean up orphaned NanoClaw containers from previous runs
-  try {
-    const output = execSync('docker ps --filter name=nanoclaw- --format {{.Names}}', {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      encoding: 'utf-8',
-    });
-    const orphans = output.trim().split('\n').filter(Boolean);
-    for (const name of orphans) {
-      try {
-        execSync(`docker kill ${name}`, { stdio: 'pipe' });
-      } catch { /* already stopped */ }
-    }
-    if (orphans.length > 0) {
-      logger.info({ count: orphans.length, names: orphans }, 'Stopped orphaned containers');
-    }
-  } catch (err) {
-    logger.warn({ err }, 'Failed to clean up orphaned containers');
-  }
+function ensureContainerSystemRunning(): void {
+  ensureContainerRuntimeRunning();
+  cleanupOrphans();
 }
 
 async function main(): Promise<void> {
-  ensureDockerRunning();
+  ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
   loadState();

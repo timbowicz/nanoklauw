@@ -360,7 +360,7 @@ echo -e "\n2. Env file copied for container?"
 [ -f data/env/env ] && echo "OK" || echo "MISSING - will be created on first run"
 
 echo -e "\n3. Docker running?"
-docker info &>/dev/null && echo "OK" || echo "NOT RUNNING - start Docker daemon"
+docker info &>/dev/null && echo "OK" || echo "NOT RUNNING - start Docker daemon (sudo systemctl start docker)"
 
 echo -e "\n4. Container image exists?"
 echo '{}' | docker run -i --entrypoint /bin/echo nanoclaw-agent:latest "OK" 2>/dev/null || echo "MISSING - run ./container/build.sh"

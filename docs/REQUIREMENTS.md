@@ -20,7 +20,7 @@ The entire codebase should be something you can read and understand. One Node.js
 
 ### Security Through True Isolation
 
-Instead of application-level permission systems trying to prevent agents from accessing things, agents run in actual Linux containers (Docker). The isolation is at the OS level. Agents can only see what's explicitly mounted. Bash access is safe because commands run inside the container, not on your Mac.
+Instead of application-level permission systems trying to prevent agents from accessing things, agents run in actual Linux containers (Docker). The isolation is at the OS level. Agents can only see what's explicitly mounted. Bash access is safe because commands run inside the container, not on your host.
 
 ### Built for One User
 
@@ -55,9 +55,8 @@ Skills to add or switch to different messaging platforms:
 - `/convert-to-telegram` - Replace WhatsApp with Telegram entirely
 
 ### Container Runtime
-The project currently uses Docker (macOS-only). We need:
-- `/convert-to-docker` - Replace Docker with standard Docker
-- This unlocks Linux support and broader deployment options
+The project uses Docker by default (cross-platform). For macOS users who prefer Apple Container:
+- `/convert-to-apple-container` - Switch from Docker to Apple Container (macOS-only)
 
 ### Platform Support
 - `/setup-linux` - Make the full setup work on Linux (depends on Docker conversion)
@@ -104,7 +103,7 @@ A personal Claude assistant accessible via WhatsApp, with minimal custom code.
 - Sessions auto-compact when context gets too long, preserving critical information
 
 ### Container Isolation
-- All agents run inside Docker (lightweight Linux VMs)
+- All agents run inside Docker containers (lightweight Linux VMs)
 - Each agent invocation spawns a container with mounted directories
 - Containers provide filesystem isolation - agents can only see mounted paths
 - Bash access is safe because commands run inside the container, not on the host
