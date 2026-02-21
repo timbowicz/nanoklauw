@@ -162,32 +162,5 @@ describe('SlackChannel', () => {
     expect(ack).toHaveBeenCalledWith('Abort requested.');
   });
 
-  it('sends debounced ephemeral status updates on setTyping', async () => {
-    vi.useFakeTimers();
-
-    const channel = createChannel();
-    await channel.connect();
-
-    const handler = mockMessageHandlers[0];
-    await handler({
-      client: mockClient,
-      message: {
-        channel: 'C123ABC',
-        user: 'U123',
-        ts: '1.2',
-        channel_type: 'channel',
-        text: '<@U_BOT> hello',
-      },
-    });
-
-    await channel.setTyping('C123ABC', true);
-    await channel.setTyping('C123ABC', true);
-    expect(mockClient.chat.postEphemeral).toHaveBeenCalledTimes(1);
-
-    await vi.advanceTimersByTimeAsync(4500);
-    await channel.setTyping('C123ABC', true);
-    expect(mockClient.chat.postEphemeral).toHaveBeenCalledTimes(2);
-
-    vi.useRealTimers();
-  });
+  // setTyping is intentionally a no-op (ephemeral status messages were distracting)
 });
