@@ -41,6 +41,12 @@ export interface RegisteredGroup {
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
 }
 
+export interface ImageBlock {
+  type: 'image';
+  media_type: string;
+  data: string; // base64
+}
+
 export interface NewMessage {
   id: string;
   chat_jid: string;
@@ -50,6 +56,7 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  image_data?: ImageBlock; // transient, never persisted to DB
 }
 
 export interface ScheduledTask {
@@ -89,6 +96,8 @@ export interface Channel {
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
   // Optional: send an image with optional caption.
   sendImage?(jid: string, image: Buffer, caption?: string): Promise<void>;
+  // Optional: send a document/file with filename and optional caption.
+  sendDocument?(jid: string, document: Buffer, filename: string, caption?: string): Promise<void>;
   // Optional: metadata sync (used by refresh_groups IPC task).
   syncGroupMetadata?(force?: boolean): Promise<void>;
 }

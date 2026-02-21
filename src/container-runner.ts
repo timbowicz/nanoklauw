@@ -10,6 +10,7 @@ import path from 'path';
 import {
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
+  CONTAINER_SECRETS,
   CONTAINER_TIMEOUT,
   DATA_DIR,
   GROUPS_DIR,
@@ -43,6 +44,7 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
+  images?: Array<{ messageId: string; filename: string }>;
 }
 
 export interface ContainerOutput {
@@ -50,6 +52,74 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+}
+
+/**
+ * Create per-group Claude sessions directory with default settings.
+ * Returns the path to the .claude/ directory.
+ */
+function setupSessionDirectory(groupFolder: string): string {
+  const groupSessionsDir = path.join(
+    DATA_DIR,
+    'sessions',
+    groupFolder,
+    '.claude',
+  );
+  fs.mkdirSync(groupSessionsDir, { recursive: true });
+  // Ensure writable by container's node user (uid 1000)
+  try {
+    fs.chownSync(groupSessionsDir, 1000, 1000);
+  } catch {}
+
+  const settingsFile = path.join(groupSessionsDir, 'settings.json');
+  if (!fs.existsSync(settingsFile)) {
+    fs.writeFileSync(
+      settingsFile,
+      JSON.stringify(
+        {
+          env: {
+            CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+            CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+            CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+          },
+        },
+        null,
+        2,
+      ) + '\n',
+    );
+  }
+
+  return groupSessionsDir;
+}
+
+/** Sync skills from container/skills/ into the group's .claude/skills/. */
+function syncSkillsToGroup(groupSessionsDir: string): void {
+  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
+  const skillsDst = path.join(groupSessionsDir, 'skills');
+  if (fs.existsSync(skillsSrc)) {
+    for (const skillDir of fs.readdirSync(skillsSrc)) {
+      const srcDir = path.join(skillsSrc, skillDir);
+      if (!fs.statSync(srcDir).isDirectory()) continue;
+      const dstDir = path.join(skillsDst, skillDir);
+      fs.cpSync(srcDir, dstDir, { recursive: true });
+    }
+  }
+}
+
+/**
+ * Create per-group IPC namespace with required subdirectories.
+ * Returns the path to the group's IPC directory.
+ */
+function setupGroupIpcNamespace(groupFolder: string): string {
+  const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
+  for (const sub of ['messages', 'tasks', 'input', 'media']) {
+    const dir = path.join(groupIpcDir, sub);
+    fs.mkdirSync(dir, { recursive: true });
+    try {
+      fs.chownSync(dir, 1000, 1000);
+    } catch {}
+  }
+  return groupIpcDir;
 }
 
 interface VolumeMount {
@@ -100,61 +170,15 @@ function buildVolumeMounts(
     }
   }
 
-  // Per-group Claude sessions directory (isolated from other groups)
-  // Each group gets their own .claude/ to prevent cross-group session access
-  const groupSessionsDir = path.join(
-    DATA_DIR,
-    'sessions',
-    group.folder,
-    '.claude',
-  );
-  fs.mkdirSync(groupSessionsDir, { recursive: true });
-  // Ensure the sessions directory (mounted as /home/node/.claude) is writable
-  // by the container's node user (uid 1000). The host may run as root, which
-  // would leave the directory owned by root and unwritable inside the container.
-  try { fs.chownSync(groupSessionsDir, 1000, 1000); } catch {}
-  const settingsFile = path.join(groupSessionsDir, 'settings.json');
-  if (!fs.existsSync(settingsFile)) {
-    fs.writeFileSync(settingsFile, JSON.stringify({
-      env: {
-        // Enable agent swarms (subagent orchestration)
-        // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
-        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-        // Load CLAUDE.md from additional mounted directories
-        // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
-        CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-        // Enable Claude's memory feature (persists user preferences between sessions)
-        // https://code.claude.com/docs/en/memory#manage-auto-memory
-        CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-      },
-    }, null, 2) + '\n');
-  }
-
-  // Sync skills from container/skills/ into each group's .claude/skills/
-  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
-  const skillsDst = path.join(groupSessionsDir, 'skills');
-  if (fs.existsSync(skillsSrc)) {
-    for (const skillDir of fs.readdirSync(skillsSrc)) {
-      const srcDir = path.join(skillsSrc, skillDir);
-      if (!fs.statSync(srcDir).isDirectory()) continue;
-      const dstDir = path.join(skillsDst, skillDir);
-      fs.cpSync(srcDir, dstDir, { recursive: true });
-    }
-  }
+  const groupSessionsDir = setupSessionDirectory(group.folder);
+  syncSkillsToGroup(groupSessionsDir);
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
     readonly: false,
   });
 
-  // Per-group IPC namespace: each group gets its own IPC directory
-  // This prevents cross-group privilege escalation via IPC
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
-  for (const sub of ['messages', 'tasks', 'input', 'media']) {
-    const dir = path.join(groupIpcDir, sub);
-    fs.mkdirSync(dir, { recursive: true });
-    try { fs.chownSync(dir, 1000, 1000); } catch {}
-  }
+  const groupIpcDir = setupGroupIpcNamespace(group.folder);
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
@@ -188,7 +212,7 @@ function buildVolumeMounts(
  * Secrets are never written to disk or mounted as files.
  */
 function readSecrets(): Record<string, string> {
-  return readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'HA_URL', 'HA_TOKEN', 'TRIBE_CLIENT_ID', 'TRIBE_CLIENT_SECRET']);
+  return readEnvFile(CONTAINER_SECRETS);
 }
 
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {

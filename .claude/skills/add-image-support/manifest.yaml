@@ -1,0 +1,21 @@
+skill: image-support
+version: 1.0.0
+description: "Image receiving, processing, and sending for WhatsApp"
+core_version: 0.1.0
+adds:
+  - src/image-handler.ts
+  - src/media-processing.ts
+modifies:
+  - src/index.ts
+  - src/types.ts
+  - src/channels/whatsapp.ts
+  - src/db.ts
+  - src/router.ts
+  - src/group-queue.ts
+  - src/ipc.ts
+structured:
+  npm_dependencies: {}
+  env_additions: []
+conflicts: []
+depends: []
+test: "npx vitest run src/formatting.test.ts"

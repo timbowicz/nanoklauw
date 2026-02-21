@@ -5,10 +5,10 @@ core_version: 0.1.0
 adds:
   - src/channels/slack.ts
   - src/channels/slack.test.ts
+  - src/channel-manager.ts
 modifies:
   - src/index.ts
   - src/config.ts
-  - src/group-queue.ts
   - src/types.ts
   - src/routing.test.ts
   - package.json

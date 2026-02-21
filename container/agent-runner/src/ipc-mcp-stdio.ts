@@ -391,6 +391,48 @@ server.tool(
   },
 );
 
+server.tool(
+  'send_document',
+  'Send a file/document from the workspace to the chat (e.g., .txt, .pdf, .csv, .json). The file is sent as a WhatsApp document attachment.',
+  {
+    file_path: z.string().describe('Absolute path to the file inside the container (e.g., /workspace/group/report.txt)'),
+    filename: z.string().optional().describe('Display filename for the recipient (defaults to the original filename)'),
+    caption: z.string().optional().describe('Optional caption to send with the document'),
+  },
+  async (args) => {
+    if (!fs.existsSync(args.file_path)) {
+      return {
+        content: [{ type: 'text' as const, text: `File not found: ${args.file_path}` }],
+        isError: true,
+      };
+    }
+
+    // Copy file to media directory for IPC
+    fs.mkdirSync(MEDIA_DIR, { recursive: true });
+    const ext = path.extname(args.file_path) || '';
+    const ipcFilename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+    const destPath = path.join(MEDIA_DIR, ipcFilename);
+    fs.copyFileSync(args.file_path, destPath);
+
+    const displayFilename = args.filename || path.basename(args.file_path);
+
+    const ipcData = {
+      type: 'send_document',
+      chatJid,
+      filePath: `/workspace/ipc/media/${ipcFilename}`,
+      filename: displayFilename,
+      caption: args.caption || undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+    writeIpcFile(MESSAGES_DIR, ipcData);
+
+    return {
+      content: [{ type: 'text' as const, text: `Document "${displayFilename}" sent.` }],
+    };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

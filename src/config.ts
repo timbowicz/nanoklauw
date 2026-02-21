@@ -74,6 +74,17 @@ export const TRIGGER_PATTERN = new RegExp(
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+// Secrets that are allowed to be passed to containers via stdin
+export const CONTAINER_SECRETS = [
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_API_KEY',
+  'GEMINI_API_KEY',
+  'HA_URL',
+  'HA_TOKEN',
+  'TRIBE_CLIENT_ID',
+  'TRIBE_CLIENT_SECRET',
+];
+
 // Slack configuration
 export const SLACK_BOT_TOKEN =
   process.env.SLACK_BOT_TOKEN || envConfig.SLACK_BOT_TOKEN || '';

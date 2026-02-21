@@ -278,6 +278,19 @@ export function storeMessageDirect(msg: {
   );
 }
 
+/**
+ * Update the content of a stored message (e.g. to enrich with image description).
+ */
+export function updateMessageContent(
+  id: string,
+  chatJid: string,
+  content: string,
+): void {
+  db.prepare(
+    'UPDATE messages SET content = ? WHERE id = ? AND chat_jid = ?',
+  ).run(content, id, chatJid);
+}
+
 export function getNewMessages(
   jids: string[],
   lastTimestamp: string,

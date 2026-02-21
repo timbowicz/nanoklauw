@@ -3,6 +3,7 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
+import { findChannel } from './channel-manager.js';
 import {
   DATA_DIR,
   IPC_POLL_INTERVAL,
@@ -12,11 +13,12 @@ import {
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { logger } from './logger.js';
-import { RegisteredGroup } from './types.js';
+import { Channel, RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
   sendImage: (jid: string, image: Buffer, caption?: string) => Promise<void>;
+  sendDocument: (jid: string, document: Buffer, filename: string, caption?: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroupMetadata: (force: boolean) => Promise<void>;
@@ -27,6 +29,171 @@ export interface IpcDeps {
     availableGroups: AvailableGroup[],
     registeredJids: Set<string>,
   ) => void;
+}
+
+/**
+ * Build IpcDeps from channels array and app-level callbacks.
+ * Extracts the inline closure construction from index.ts main().
+ */
+export function createIpcDeps(opts: {
+  channels: Channel[];
+  registeredGroups: () => Record<string, RegisteredGroup>;
+  registerGroup: (jid: string, group: RegisteredGroup) => void;
+  getAvailableGroups: () => AvailableGroup[];
+  writeGroupsSnapshot: IpcDeps['writeGroupsSnapshot'];
+}): IpcDeps {
+  return {
+    sendMessage: (jid, text) => {
+      const channel = findChannel(opts.channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      return channel.sendMessage(jid, text);
+    },
+    sendImage: (jid, image, caption) => {
+      const channel = findChannel(opts.channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      if (!channel.sendImage)
+        throw new Error(
+          `Channel ${channel.name} does not support images`,
+        );
+      return channel.sendImage(jid, image, caption);
+    },
+    sendDocument: (jid, document, filename, caption) => {
+      const channel = findChannel(opts.channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      if (!channel.sendDocument)
+        throw new Error(
+          `Channel ${channel.name} does not support documents`,
+        );
+      return channel.sendDocument(jid, document, filename, caption);
+    },
+    registeredGroups: opts.registeredGroups,
+    registerGroup: opts.registerGroup,
+    syncGroupMetadata: (force) =>
+      Promise.all(
+        opts.channels.map((ch) => ch.syncGroupMetadata?.(force)),
+      ).then(() => {}),
+    getAvailableGroups: opts.getAvailableGroups,
+    writeGroupsSnapshot: opts.writeGroupsSnapshot,
+  };
+}
+
+/** Check if a source group is authorized to access a target JID. */
+function canAccessJid(
+  sourceGroup: string,
+  targetFolder: string | undefined,
+  isMain: boolean,
+): boolean {
+  return isMain || (!!targetFolder && targetFolder === sourceGroup);
+}
+
+/** Resolve a container-relative IPC path to a host path. */
+function resolveIpcPath(containerPath: string, sourceGroup: string): string {
+  return containerPath.replace(
+    '/workspace/ipc/',
+    path.join(DATA_DIR, 'ipc', sourceGroup) + '/',
+  );
+}
+
+async function handleIpcMessage(
+  data: { chatJid: string; text: string },
+  sourceGroup: string,
+  isMain: boolean,
+  deps: IpcDeps,
+  registeredGroups: Record<string, RegisteredGroup>,
+): Promise<void> {
+  const targetGroup = registeredGroups[data.chatJid];
+  if (canAccessJid(sourceGroup, targetGroup?.folder, isMain)) {
+    await deps.sendMessage(data.chatJid, data.text);
+    logger.info({ chatJid: data.chatJid, sourceGroup }, 'IPC message sent');
+  } else {
+    logger.warn(
+      { chatJid: data.chatJid, sourceGroup },
+      'Unauthorized IPC message attempt blocked',
+    );
+  }
+}
+
+async function handleIpcImage(
+  data: { chatJid: string; imagePath: string; caption?: string },
+  sourceGroup: string,
+  isMain: boolean,
+  deps: IpcDeps,
+  registeredGroups: Record<string, RegisteredGroup>,
+): Promise<void> {
+  const targetGroup = registeredGroups[data.chatJid];
+  if (!canAccessJid(sourceGroup, targetGroup?.folder, isMain)) {
+    logger.warn(
+      { chatJid: data.chatJid, sourceGroup },
+      'Unauthorized IPC image attempt blocked',
+    );
+    return;
+  }
+  const hostImagePath = resolveIpcPath(data.imagePath, sourceGroup);
+  if (fs.existsSync(hostImagePath)) {
+    const imageBuffer = fs.readFileSync(hostImagePath);
+    await deps.sendImage(data.chatJid, imageBuffer, data.caption);
+    try {
+      fs.unlinkSync(hostImagePath);
+    } catch {}
+    logger.info(
+      { chatJid: data.chatJid, sourceGroup, size: imageBuffer.length },
+      'IPC image sent',
+    );
+  } else {
+    logger.warn(
+      { chatJid: data.chatJid, imagePath: hostImagePath, sourceGroup },
+      'IPC image file not found',
+    );
+  }
+}
+
+async function handleIpcDocument(
+  data: {
+    chatJid: string;
+    filePath: string;
+    filename: string;
+    caption?: string;
+  },
+  sourceGroup: string,
+  isMain: boolean,
+  deps: IpcDeps,
+  registeredGroups: Record<string, RegisteredGroup>,
+): Promise<void> {
+  const targetGroup = registeredGroups[data.chatJid];
+  if (!canAccessJid(sourceGroup, targetGroup?.folder, isMain)) {
+    logger.warn(
+      { chatJid: data.chatJid, sourceGroup },
+      'Unauthorized IPC document attempt blocked',
+    );
+    return;
+  }
+  const hostFilePath = resolveIpcPath(data.filePath, sourceGroup);
+  if (fs.existsSync(hostFilePath)) {
+    const fileBuffer = fs.readFileSync(hostFilePath);
+    await deps.sendDocument(
+      data.chatJid,
+      fileBuffer,
+      data.filename,
+      data.caption,
+    );
+    try {
+      fs.unlinkSync(hostFilePath);
+    } catch {}
+    logger.info(
+      {
+        chatJid: data.chatJid,
+        sourceGroup,
+        size: fileBuffer.length,
+        filename: data.filename,
+      },
+      'IPC document sent',
+    );
+  } else {
+    logger.warn(
+      { chatJid: data.chatJid, filePath: hostFilePath, sourceGroup },
+      'IPC document file not found',
+    );
+  }
 }
 
 let ipcWatcherRunning = false;
@@ -73,55 +240,11 @@ export function startIpcWatcher(deps: IpcDeps): void {
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
               if (data.type === 'message' && data.chatJid && data.text) {
-                // Authorization: verify this group can send to this chatJid
-                const targetGroup = registeredGroups[data.chatJid];
-                if (
-                  isMain ||
-                  (targetGroup && targetGroup.folder === sourceGroup)
-                ) {
-                  await deps.sendMessage(data.chatJid, data.text);
-                  logger.info(
-                    { chatJid: data.chatJid, sourceGroup },
-                    'IPC message sent',
-                  );
-                } else {
-                  logger.warn(
-                    { chatJid: data.chatJid, sourceGroup },
-                    'Unauthorized IPC message attempt blocked',
-                  );
-                }
+                await handleIpcMessage(data, sourceGroup, isMain, deps, registeredGroups);
               } else if (data.type === 'send_image' && data.chatJid && data.imagePath) {
-                const targetGroup = registeredGroups[data.chatJid];
-                if (
-                  isMain ||
-                  (targetGroup && targetGroup.folder === sourceGroup)
-                ) {
-                  // Resolve imagePath from IPC directory to host path
-                  const hostImagePath = data.imagePath.replace(
-                    '/workspace/ipc/',
-                    path.join(DATA_DIR, 'ipc', sourceGroup) + '/',
-                  );
-                  if (fs.existsSync(hostImagePath)) {
-                    const imageBuffer = fs.readFileSync(hostImagePath);
-                    await deps.sendImage(data.chatJid, imageBuffer, data.caption);
-                    // Clean up the media file after sending
-                    try { fs.unlinkSync(hostImagePath); } catch {}
-                    logger.info(
-                      { chatJid: data.chatJid, sourceGroup, size: imageBuffer.length },
-                      'IPC image sent',
-                    );
-                  } else {
-                    logger.warn(
-                      { chatJid: data.chatJid, imagePath: hostImagePath, sourceGroup },
-                      'IPC image file not found',
-                    );
-                  }
-                } else {
-                  logger.warn(
-                    { chatJid: data.chatJid, sourceGroup },
-                    'Unauthorized IPC image attempt blocked',
-                  );
-                }
+                await handleIpcImage(data, sourceGroup, isMain, deps, registeredGroups);
+              } else if (data.type === 'send_document' && data.chatJid && data.filePath && data.filename) {
+                await handleIpcDocument(data, sourceGroup, isMain, deps, registeredGroups);
               }
               fs.unlinkSync(filePath);
             } catch (err) {

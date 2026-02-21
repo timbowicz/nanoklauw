@@ -17,6 +17,7 @@ import {
   updateChatName,
 } from '../db.js';
 import { logger } from '../logger.js';
+import { downloadImage } from '../media-processing.js';
 import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -176,12 +177,13 @@ export class WhatsAppChannel implements Channel {
         // Only deliver full message for registered groups
         const groups = this.opts.registeredGroups();
         if (groups[chatJid]) {
+          const hasImage = !!msg.message?.imageMessage;
           const content =
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
             msg.message?.imageMessage?.caption ||
             msg.message?.videoMessage?.caption ||
-            '';
+            (hasImage ? '[Image]' : '');
 
           // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
           if (!content) continue;
@@ -198,6 +200,11 @@ export class WhatsAppChannel implements Channel {
             ? fromMe
             : content.startsWith(`${ASSISTANT_NAME}:`);
 
+          // Download image data if present (non-blocking — failure just skips the image)
+          const imageData = hasImage
+            ? await downloadImage(msg, this.sock)
+            : null;
+
           this.opts.onMessage(chatJid, {
             id: msg.key.id || '',
             chat_jid: chatJid,
@@ -207,6 +214,7 @@ export class WhatsAppChannel implements Channel {
             timestamp,
             is_from_me: fromMe,
             is_bot_message: isBotMessage,
+            ...(imageData ? { image_data: imageData } : {}),
           });
         }
       }
@@ -250,6 +258,27 @@ export class WhatsAppChannel implements Channel {
       logger.info({ jid, size: image.length, hasCaption: !!caption }, 'Image sent');
     } catch (err) {
       logger.warn({ jid, err }, 'Failed to send image');
+    }
+  }
+
+  async sendDocument(jid: string, document: Buffer, filename: string, caption?: string): Promise<void> {
+    if (!this.connected) {
+      logger.warn({ jid }, 'WA disconnected, cannot send document');
+      return;
+    }
+    try {
+      const mimetype = filename.endsWith('.pdf') ? 'application/pdf'
+        : filename.endsWith('.txt') ? 'text/plain'
+        : 'application/octet-stream';
+      await this.sock.sendMessage(jid, {
+        document,
+        mimetype,
+        fileName: filename,
+        caption: caption || undefined,
+      });
+      logger.info({ jid, size: document.length, filename, hasCaption: !!caption }, 'Document sent');
+    } catch (err) {
+      logger.warn({ jid, err }, 'Failed to send document');
     }
   }
 

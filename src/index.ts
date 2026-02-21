@@ -1,20 +1,15 @@
 import fs from 'fs';
 import path from 'path';
 
+import { findChannel, initializeChannels } from './channel-manager.js';
 import {
   ASSISTANT_NAME,
   DATA_DIR,
-  GATEWAY_CHANNEL,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
-  SLACK_APP_TOKEN,
-  SLACK_BOT_TOKEN,
-  SLACK_SIGNING_SECRET,
   TRIGGER_PATTERN,
 } from './config.js';
-import { SlackChannel } from './channels/slack.js';
-import { WhatsAppChannel } from './channels/whatsapp.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -38,8 +33,10 @@ import {
   storeMessage,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
-import { startIpcWatcher } from './ipc.js';
-import { findChannel, formatMessages, formatOutbound } from './router.js';
+import { ImageHandler } from './image-handler.js';
+import { createIpcDeps, startIpcWatcher } from './ipc.js';
+import { applyImageDescriptions, ImageRef } from './media-processing.js';
+import { formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -53,8 +50,8 @@ let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
 
-let whatsapp: WhatsAppChannel | null = null;
-const channels: Channel[] = [];
+const imageHandler = new ImageHandler();
+let channels: Channel[] = [];
 const queue = new GroupQueue();
 
 function loadState(): void {
@@ -148,6 +145,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
+  // Attach pending image data to messages (consumed from transient store)
+  imageHandler.attachToMessages(missedMessages);
+
+  // Write image files for the container to read
+  const imageRefs = imageHandler.prepareForContainer(group.folder, missedMessages);
+
   const prompt = formatMessages(missedMessages);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
@@ -158,7 +161,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   saveState();
 
   logger.info(
-    { group: group.name, messageCount: missedMessages.length },
+    { group: group.name, messageCount: missedMessages.length, imageCount: imageRefs.length },
     'Processing messages',
   );
 
@@ -182,7 +185,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (result.result) {
       const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
       // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+      let text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+
+      // Parse image-description tags, update DB, strip from output
+      text = applyImageDescriptions(missedMessages, text, chatJid);
+
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
         await channel.sendMessage(chatJid, text);
@@ -199,10 +206,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (result.status === 'error') {
       hadError = true;
     }
-  });
+  }, imageRefs);
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
+
+  // Cleanup image files after container exits
+  if (imageRefs.length > 0) {
+    imageHandler.cleanup(group.folder, imageRefs);
+  }
 
   if (output === 'error' || hadError) {
     // If we already sent output to the user, don't roll back the cursor —
@@ -226,6 +238,7 @@ async function runAgent(
   prompt: string,
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  imageRefs?: ImageRef[],
 ): Promise<'success' | 'error'> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
   const sessionId = sessions[group.folder];
@@ -275,6 +288,7 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isMain,
+        ...(imageRefs && imageRefs.length > 0 ? { images: imageRefs } : {}),
       },
       (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, group.folder),
       wrappedOnOutput,
@@ -364,9 +378,31 @@ async function startMessageLoop(): Promise<void> {
           );
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
+
+          // Attach pending image data (don't consume yet — may need it for processGroupMessages)
+          imageHandler.peekAttachToMessages(messagesToSend);
+
           const formatted = formatMessages(messagesToSend);
 
-          if (queue.sendMessage(chatJid, formatted)) {
+          // Try to pipe to an active container
+          const hasImages = messagesToSend.some((m) => m.image_data);
+          let piped = false;
+
+          if (hasImages) {
+            // Write image files first so the container can read them
+            const pipedImageRefs = imageHandler.prepareForContainer(group.folder, messagesToSend);
+            piped = queue.sendMessage(chatJid, formatted, pipedImageRefs.length > 0 ? pipedImageRefs : undefined);
+            if (!piped) {
+              // Piping failed — clean up files, processGroupMessages will re-write
+              imageHandler.cleanup(group.folder, pipedImageRefs);
+            }
+          } else {
+            piped = queue.sendMessage(chatJid, formatted);
+          }
+
+          if (piped) {
+            // Piped successfully — consume images from pending store
+            imageHandler.consumeImages(messagesToSend);
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
@@ -378,6 +414,7 @@ async function startMessageLoop(): Promise<void> {
             channel.setTyping?.(chatJid, true);
           } else {
             // No active container — enqueue for a new one
+            // pendingImages NOT consumed, processGroupMessages will pick them up
             queue.enqueueMessageCheck(chatJid);
           }
         }
@@ -428,46 +465,20 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  // Channel callbacks (shared by all channels)
-  const channelOpts = {
-    onMessage: (_chatJid: string, msg: NewMessage) => storeMessage(msg),
+  // Create and connect channels
+  channels = await initializeChannels({
+    onMessage: (_chatJid: string, msg: NewMessage) => {
+      if (msg.image_data) {
+        imageHandler.storeImage(msg.id, msg.image_data);
+      }
+      storeMessage(msg);
+    },
     onChatMetadata: (chatJid: string, timestamp: string, name?: string, channel?: string, isGroup?: boolean) =>
       storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
     registerGroup,
-    onAbort: async (chatJid: string) => queue.abortGroup(chatJid),
-  };
-
-  // Create and connect channels based on GATEWAY_CHANNEL
-  const enableWhatsApp =
-    GATEWAY_CHANNEL === 'whatsapp' || GATEWAY_CHANNEL === 'both';
-  const enableSlack =
-    GATEWAY_CHANNEL === 'slack' || GATEWAY_CHANNEL === 'both';
-
-  if (!enableWhatsApp && !enableSlack) {
-    throw new Error(
-      `Invalid GATEWAY_CHANNEL="${GATEWAY_CHANNEL}". Use "whatsapp", "slack", or "both".`,
-    );
-  }
-
-  if (enableWhatsApp) {
-    whatsapp = new WhatsAppChannel(channelOpts);
-    channels.push(whatsapp);
-    await whatsapp.connect();
-  }
-
-  if (enableSlack) {
-    const slack = new SlackChannel({
-      ...channelOpts,
-      botToken: SLACK_BOT_TOKEN,
-      appToken: SLACK_APP_TOKEN,
-      signingSecret: SLACK_SIGNING_SECRET,
-    });
-    channels.push(slack);
-    await slack.connect();
-  }
-
-  logger.info({ gatewayChannel: GATEWAY_CHANNEL }, 'Gateway channels connected');
+    onAbort: async (chatJid: string): Promise<boolean> => queue.abortGroup(chatJid),
+  });
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
@@ -485,25 +496,15 @@ async function main(): Promise<void> {
       if (text) await channel.sendMessage(jid, text);
     },
   });
-  startIpcWatcher({
-    sendMessage: (jid, text) => {
-      const channel = findChannel(channels, jid);
-      if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      return channel.sendMessage(jid, text);
-    },
-    sendImage: (jid, image, caption) => {
-      const channel = findChannel(channels, jid);
-      if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      if (!channel.sendImage) throw new Error(`Channel ${channel.name} does not support images`);
-      return channel.sendImage(jid, image, caption);
-    },
-    registeredGroups: () => registeredGroups,
-    registerGroup,
-    syncGroupMetadata: (force) =>
-      Promise.all(channels.map((ch) => ch.syncGroupMetadata?.(force))).then(() => {}),
-    getAvailableGroups,
-    writeGroupsSnapshot: (gf, im, ag, rj) => writeGroupsSnapshot(gf, im, ag, rj),
-  });
+  startIpcWatcher(
+    createIpcDeps({
+      channels,
+      registeredGroups: () => registeredGroups,
+      registerGroup,
+      getAvailableGroups,
+      writeGroupsSnapshot: (gf, im, ag, rj) => writeGroupsSnapshot(gf, im, ag, rj),
+    }),
+  );
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
   startMessageLoop();

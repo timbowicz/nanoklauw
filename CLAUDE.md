@@ -116,3 +116,97 @@ docker builder prune -af
 ```
 
 Always verify after rebuild: `docker run -i --rm --entrypoint wc nanoclaw-agent:latest -l /app/src/index.ts`
+
+## Upstream Compatibility & Modular Development
+
+This fork (nanoklauw) tracks upstream [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw). Upstream uses a **skills architecture** with a full `skills-engine/` that manages merges, state, and conflict resolution. All customizations here must be structured to minimize merge conflicts with future upstream updates.
+
+### Upstream Architecture (Summary)
+
+Upstream NanoClaw uses a three-tier conflict resolution model:
+1. **Git-native** — `git merge-file` three-way merges against a clean base (`.nanoclaw/base/`)
+2. **Claude Code** — reads skill manifests and `.intent.md` files to resolve what git can't
+3. **User** — only for genuine semantic ambiguity
+
+Skills are structured packages in `.claude/skills/` with:
+- `SKILL.md` — context, intent, what the skill does
+- `manifest.yaml` — metadata, deps, env vars, file lists, test command
+- `add/` — new files copied directly (e.g., `add/src/channels/telegram.ts`)
+- `modify/` — full modified versions of core files for three-way merge
+- `modify/src/file.ts.intent.md` — structured intent docs (What, Invariants, Must-keep)
+- `tests/` — integration tests that run after every apply
+
+### Rules for Adding Features
+
+**1. Prefer the skill pattern.** If a feature can be packaged as a skill, do it. Create it under `.claude/skills/<skill-name>/` with:
+- `SKILL.md` with description and instructions
+- `manifest.yaml` listing `adds`, `modifies`, `structured` (npm deps, env vars)
+- `add/` for new files
+- `modify/` with full modified files + `.intent.md` for any core file changes
+- `tests/` with integration tests
+
+**2. Minimize core file modifications.** The files most likely to conflict with upstream are:
+- `src/index.ts` (orchestrator — every channel skill modifies this)
+- `src/config.ts` (every skill adds config here)
+- `src/router.ts` (outbound message routing)
+
+When modifying these files, keep changes **small and isolated** — add a clearly delimited block rather than weaving logic throughout. This makes three-way merges succeed.
+
+**3. New functionality goes in new files.** Follow the channel pattern:
+- New channel → `src/channels/<name>.ts` (self-contained)
+- New integration → `src/<integration-name>.ts`
+- New utility → `src/<utility-name>.ts`
+- Import and wire up in `src/index.ts` with minimal glue code
+
+**4. Follow the manifest format.** Even for local-only features, use the upstream manifest schema:
+```yaml
+skill: <name>
+version: 1.0.0
+description: "<what it does>"
+core_version: 0.1.0
+adds:
+  - src/channels/<name>.ts
+modifies:
+  - src/index.ts
+  - src/config.ts
+structured:
+  npm_dependencies:
+    <package>: "<semver>"
+  env_additions:
+    - <ENV_VAR>
+conflicts: []
+depends: []
+test: "npx vitest run src/channels/<name>.test.ts"
+```
+
+**5. Use intent files for core modifications.** When a skill modifies a core file, include a `<filename>.intent.md` alongside the modified file in `modify/`:
+```markdown
+# Intent: index.ts modifications
+## What this skill adds
+<brief description>
+## Key sections
+<what code blocks are added/changed>
+## Invariants
+<what must not be broken>
+## Must-keep sections
+<critical code that must survive merges>
+```
+
+**6. Don't reorganize or refactor upstream code.** Moving, renaming, or restructuring files that upstream owns will cause painful merge conflicts. Only modify what's necessary for the feature.
+
+**7. Keep structured operations declarative.** npm dependencies, env vars, and docker-compose services should be declared in the manifest's `structured` section, not added manually or via post-apply scripts.
+
+**8. Test after every change.** Skills must include tests. Run them with the command in `manifest.yaml`'s `test` field. Clean merges don't guarantee working code.
+
+### Currently Applied Local Customizations
+
+Track what's been modified from upstream here so future merges are predictable:
+- WhatsApp channel (`src/channels/whatsapp.ts`) — customized from upstream
+- IPC system (`src/ipc.ts`) — local modifications
+- Container runner (`src/container-runner.ts`) — local modifications
+- Router (`src/router.ts`) — local modifications
+- Database (`src/db.ts`) — local modifications
+- Media processing (`src/media-processing.ts`) — new file, not in upstream
+- Group queue (`src/group-queue.ts`) — local modifications
+- Types (`src/types.ts`) — local modifications
+- Formatting tests (`src/formatting.test.ts`) — local modifications

@@ -56,3 +56,13 @@ NEVER use markdown. Only use WhatsApp/Telegram formatting:
 - ```triple backticks``` for code
 
 No ## headings. No [links](url). No **double stars**.
+
+## Images
+
+When you receive a message with `has-image="true"`, you can see the actual image. After responding, emit a short factual description in an `<image-description>` tag so future conversations can reference it:
+
+```
+<image-description message-id="MSG_ID">A golden retriever sitting on a red couch</image-description>
+```
+
+The tag is stripped from the user-visible output. Keep descriptions to one sentence.
