@@ -13,6 +13,16 @@ import { updateMessageContent } from './db.js';
 import { logger } from './logger.js';
 import { ImageBlock, NewMessage } from './types.js';
 
+/** Map MIME types to file extensions. Defaults to 'jpg' for unknown types. */
+function mimeToExt(mime: string): string {
+  switch (mime) {
+    case 'image/png': return 'png';
+    case 'image/webp': return 'webp';
+    case 'image/gif': return 'gif';
+    default: return 'jpg';
+  }
+}
+
 /**
  * Download an image from a WhatsApp message and return it as base64.
  * Returns null if the message has no image or download fails.
@@ -73,7 +83,7 @@ export function writeImageFiles(
   for (const msg of messages) {
     if (!msg.image_data) continue;
 
-    const ext = msg.image_data.media_type === 'image/png' ? 'png' : 'jpg';
+    const ext = mimeToExt(msg.image_data.media_type);
     const safeId = msg.id.replace(/[^a-zA-Z0-9._-]/g, '_');
     const filename = `${safeId}.${ext}`;
     const filepath = path.join(mediaDir, filename);

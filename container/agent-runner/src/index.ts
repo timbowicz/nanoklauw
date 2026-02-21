@@ -305,6 +305,19 @@ function shouldClose(): boolean {
 
 const IPC_MEDIA_DIR = '/workspace/ipc/media';
 
+/** Map file extension to MIME type. Falls back to detecting from magic bytes. */
+function extToMime(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'png': return 'image/png';
+    case 'webp': return 'image/webp';
+    case 'gif': return 'image/gif';
+    case 'jpg':
+    case 'jpeg': return 'image/jpeg';
+    default: return 'image/jpeg';
+  }
+}
+
 /**
  * Build content blocks from prompt text and optional image refs.
  * Reads image files from the IPC media directory and returns
@@ -322,7 +335,7 @@ function buildContentBlocks(
     const filepath = path.join(IPC_MEDIA_DIR, img.filename);
     try {
       const data = fs.readFileSync(filepath).toString('base64');
-      const mediaType = img.filename.endsWith('.png') ? 'image/png' : 'image/jpeg';
+      const mediaType = extToMime(img.filename);
       blocks.push({
         type: 'image',
         source: { type: 'base64', media_type: mediaType, data },
