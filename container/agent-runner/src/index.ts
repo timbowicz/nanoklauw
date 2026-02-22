@@ -305,7 +305,18 @@ function shouldClose(): boolean {
 
 const IPC_MEDIA_DIR = '/workspace/ipc/media';
 
-/** Map file extension to MIME type. Falls back to detecting from magic bytes. */
+/** Detect actual image MIME type from magic bytes. */
+function detectMimeFromBytes(buffer: Buffer): string | null {
+  if (buffer.length < 4) return null;
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return 'image/png';
+  if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return 'image/jpeg';
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) return 'image/gif';
+  if (buffer.length >= 12 && buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46
+      && buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) return 'image/webp';
+  return null;
+}
+
+/** Map file extension to MIME type. */
 function extToMime(filename: string): string {
   const ext = filename.split('.').pop()?.toLowerCase();
   switch (ext) {
@@ -334,13 +345,14 @@ function buildContentBlocks(
   for (const img of images) {
     const filepath = path.join(IPC_MEDIA_DIR, img.filename);
     try {
-      const data = fs.readFileSync(filepath).toString('base64');
-      const mediaType = extToMime(img.filename);
+      const rawBuffer = fs.readFileSync(filepath);
+      const data = rawBuffer.toString('base64');
+      const mediaType = detectMimeFromBytes(rawBuffer) || extToMime(img.filename);
       blocks.push({
         type: 'image',
         source: { type: 'base64', media_type: mediaType, data },
       });
-      log(`Loaded image: ${img.filename} (${data.length} base64 chars)`);
+      log(`Loaded image: ${img.filename} (${data.length} base64 chars, ${mediaType})`);
     } catch (err) {
       log(`Failed to read image ${img.filename}: ${err instanceof Error ? err.message : String(err)}`);
     }

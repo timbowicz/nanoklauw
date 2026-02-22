@@ -23,6 +23,21 @@ function mimeToExt(mime: string): string {
   }
 }
 
+/** Detect actual image MIME type from magic bytes, falling back to declared MIME. */
+function detectMimeFromBuffer(buffer: Buffer, declaredMime: string): string {
+  if (buffer.length < 4) return declaredMime;
+  // PNG: 89 50 4E 47
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return 'image/png';
+  // JPEG: FF D8 FF
+  if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return 'image/jpeg';
+  // GIF: 47 49 46 38
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) return 'image/gif';
+  // WebP: 52 49 46 46 ... 57 45 42 50
+  if (buffer.length >= 12 && buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46
+      && buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) return 'image/webp';
+  return declaredMime;
+}
+
 /**
  * Download an image from a WhatsApp message and return it as base64.
  * Returns null if the message has no image or download fails.
@@ -49,7 +64,11 @@ export async function downloadImage(
       return null;
     }
 
-    const mimetype = msg.message.imageMessage.mimetype || 'image/jpeg';
+    const declaredMime = msg.message.imageMessage.mimetype || 'image/jpeg';
+    const mimetype = detectMimeFromBuffer(buffer, declaredMime);
+    if (mimetype !== declaredMime) {
+      logger.warn({ declaredMime, actualMime: mimetype }, 'Image MIME mismatch, using detected type');
+    }
     logger.info({ size: buffer.length, mimetype }, 'Downloaded image');
 
     return {
