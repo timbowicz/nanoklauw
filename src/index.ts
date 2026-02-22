@@ -32,10 +32,11 @@ import {
   storeChatMetadata,
   storeMessage,
 } from './db.js';
+import { DocumentHandler } from './document-handler.js';
 import { GroupQueue } from './group-queue.js';
 import { ImageHandler } from './image-handler.js';
 import { createIpcDeps, startIpcWatcher } from './ipc.js';
-import { applyImageDescriptions, ImageRef } from './media-processing.js';
+import { applyImageDescriptions, DocumentRef, ImageRef } from './media-processing.js';
 import { formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
@@ -51,6 +52,7 @@ let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
 
 const imageHandler = new ImageHandler();
+const documentHandler = new DocumentHandler();
 let channels: Channel[] = [];
 const queue = new GroupQueue();
 
@@ -145,11 +147,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  // Attach pending image data to messages (consumed from transient store)
+  // Attach pending media data to messages (consumed from transient store)
   imageHandler.attachToMessages(missedMessages);
+  documentHandler.attachToMessages(missedMessages);
 
-  // Write image files for the container to read
+  // Write media files for the container to read
   const imageRefs = imageHandler.prepareForContainer(group.folder, missedMessages);
+  const documentRefs = documentHandler.prepareForContainer(group.folder, missedMessages);
 
   const prompt = formatMessages(missedMessages);
 
@@ -161,7 +165,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   saveState();
 
   logger.info(
-    { group: group.name, messageCount: missedMessages.length, imageCount: imageRefs.length },
+    { group: group.name, messageCount: missedMessages.length, imageCount: imageRefs.length, documentCount: documentRefs.length },
     'Processing messages',
   );
 
@@ -206,14 +210,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (result.status === 'error') {
       hadError = true;
     }
-  }, imageRefs);
+  }, imageRefs, documentRefs);
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
-  // Cleanup image files after container exits
+  // Cleanup media files after container exits
   if (imageRefs.length > 0) {
     imageHandler.cleanup(group.folder, imageRefs);
+  }
+  if (documentRefs.length > 0) {
+    documentHandler.cleanup(group.folder, documentRefs);
   }
 
   if (output === 'error' || hadError) {
@@ -239,6 +246,7 @@ async function runAgent(
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
   imageRefs?: ImageRef[],
+  documentRefs?: DocumentRef[],
 ): Promise<'success' | 'error'> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
   const sessionId = sessions[group.folder];
@@ -289,6 +297,7 @@ async function runAgent(
         chatJid,
         isMain,
         ...(imageRefs && imageRefs.length > 0 ? { images: imageRefs } : {}),
+        ...(documentRefs && documentRefs.length > 0 ? { documents: documentRefs } : {}),
       },
       (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, group.folder),
       wrappedOnOutput,
@@ -379,30 +388,41 @@ async function startMessageLoop(): Promise<void> {
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
 
-          // Attach pending image data (don't consume yet — may need it for processGroupMessages)
+          // Attach pending media data (don't consume yet — may need it for processGroupMessages)
           imageHandler.peekAttachToMessages(messagesToSend);
+          documentHandler.peekAttachToMessages(messagesToSend);
 
           const formatted = formatMessages(messagesToSend);
 
           // Try to pipe to an active container
           const hasImages = messagesToSend.some((m) => m.image_data);
+          const hasDocuments = messagesToSend.some((m) => m.document_data);
+          const hasMedia = hasImages || hasDocuments;
           let piped = false;
 
-          if (hasImages) {
-            // Write image files first so the container can read them
-            const pipedImageRefs = imageHandler.prepareForContainer(group.folder, messagesToSend);
-            piped = queue.sendMessage(chatJid, formatted, pipedImageRefs.length > 0 ? pipedImageRefs : undefined);
+          if (hasMedia) {
+            // Write media files first so the container can read them
+            const pipedImageRefs = hasImages ? imageHandler.prepareForContainer(group.folder, messagesToSend) : [];
+            const pipedDocumentRefs = hasDocuments ? documentHandler.prepareForContainer(group.folder, messagesToSend) : [];
+            piped = queue.sendMessage(
+              chatJid,
+              formatted,
+              pipedImageRefs.length > 0 ? pipedImageRefs : undefined,
+              pipedDocumentRefs.length > 0 ? pipedDocumentRefs : undefined,
+            );
             if (!piped) {
               // Piping failed — clean up files, processGroupMessages will re-write
-              imageHandler.cleanup(group.folder, pipedImageRefs);
+              if (pipedImageRefs.length > 0) imageHandler.cleanup(group.folder, pipedImageRefs);
+              if (pipedDocumentRefs.length > 0) documentHandler.cleanup(group.folder, pipedDocumentRefs);
             }
           } else {
             piped = queue.sendMessage(chatJid, formatted);
           }
 
           if (piped) {
-            // Piped successfully — consume images from pending store
+            // Piped successfully — consume media from pending store
             imageHandler.consumeImages(messagesToSend);
+            documentHandler.consumeDocuments(messagesToSend);
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
@@ -472,6 +492,9 @@ async function main(): Promise<void> {
     onMessage: (_chatJid: string, msg: NewMessage) => {
       if (msg.image_data) {
         imageHandler.storeImage(msg.id, msg.image_data);
+      }
+      if (msg.document_data) {
+        documentHandler.storeDocument(msg.id, msg.document_data);
       }
       storeMessage(msg);
     },

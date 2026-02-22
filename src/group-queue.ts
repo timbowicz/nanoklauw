@@ -160,6 +160,7 @@ export class GroupQueue {
     groupJid: string,
     text: string,
     images?: Array<{ messageId: string; filename: string }>,
+    documents?: Array<{ messageId: string; filename: string }>,
   ): boolean {
     const state = this.getGroup(groupJid);
     if (!state.active || !state.groupFolder || state.isTaskContainer) return false;
@@ -173,6 +174,7 @@ export class GroupQueue {
       const tempPath = `${filepath}.tmp`;
       const payload: Record<string, unknown> = { type: 'message', text };
       if (images && images.length > 0) payload.images = images;
+      if (documents && documents.length > 0) payload.documents = documents;
       fs.writeFileSync(tempPath, JSON.stringify(payload));
       fs.renameSync(tempPath, filepath);
       return true;

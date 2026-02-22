@@ -47,6 +47,13 @@ export interface ImageBlock {
   data: string; // base64
 }
 
+export interface DocumentBlock {
+  type: 'document';
+  media_type: string;    // e.g. 'application/pdf', 'text/plain'
+  data: string;          // base64
+  filename: string;      // original filename from WhatsApp
+}
+
 export interface NewMessage {
   id: string;
   chat_jid: string;
@@ -57,6 +64,7 @@ export interface NewMessage {
   is_from_me?: boolean;
   is_bot_message?: boolean;
   image_data?: ImageBlock; // transient, never persisted to DB
+  document_data?: DocumentBlock; // transient, never persisted to DB
 }
 
 export interface ScheduledTask {

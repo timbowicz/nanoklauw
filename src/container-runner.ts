@@ -45,6 +45,7 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
   images?: Array<{ messageId: string; filename: string }>;
+  documents?: Array<{ messageId: string; filename: string }>;
 }
 
 export interface ContainerOutput {

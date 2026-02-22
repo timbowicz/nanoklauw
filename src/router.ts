@@ -17,6 +17,7 @@ export function formatMessages(messages: NewMessage[]): string {
       `time="${m.timestamp}"`,
     ];
     if (m.image_data) attrs.push('has-image="true"');
+    if (m.document_data) attrs.push(`has-document="${escapeXml(m.document_data.filename)}"`);
     return `<message ${attrs.join(' ')}>${escapeXml(m.content)}</message>`;
   });
   return `<messages>\n${lines.join('\n')}\n</messages>`;

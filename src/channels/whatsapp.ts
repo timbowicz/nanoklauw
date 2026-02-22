@@ -17,7 +17,7 @@ import {
   updateChatName,
 } from '../db.js';
 import { logger } from '../logger.js';
-import { downloadImage } from '../media-processing.js';
+import { downloadDocument, downloadImage } from '../media-processing.js';
 import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -178,12 +178,16 @@ export class WhatsAppChannel implements Channel {
         const groups = this.opts.registeredGroups();
         if (groups[chatJid]) {
           const hasImage = !!msg.message?.imageMessage;
+          const hasDocument = !!msg.message?.documentMessage;
+          const documentFilename = msg.message?.documentMessage?.fileName || 'document';
           const content =
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
             msg.message?.imageMessage?.caption ||
             msg.message?.videoMessage?.caption ||
-            (hasImage ? '[Image]' : '');
+            msg.message?.documentMessage?.caption ||
+            (hasImage ? '[Image]' : '') ||
+            (hasDocument ? `[Document: ${documentFilename}]` : '');
 
           // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
           if (!content) continue;
@@ -200,9 +204,12 @@ export class WhatsAppChannel implements Channel {
             ? fromMe
             : content.startsWith(`${ASSISTANT_NAME}:`);
 
-          // Download image data if present (non-blocking — failure just skips the image)
+          // Download media if present (non-blocking — failure just skips the media)
           const imageData = hasImage
             ? await downloadImage(msg, this.sock)
+            : null;
+          const documentData = hasDocument
+            ? await downloadDocument(msg, this.sock)
             : null;
 
           this.opts.onMessage(chatJid, {
@@ -215,6 +222,7 @@ export class WhatsAppChannel implements Channel {
             is_from_me: fromMe,
             is_bot_message: isBotMessage,
             ...(imageData ? { image_data: imageData } : {}),
+            ...(documentData ? { document_data: documentData } : {}),
           });
         }
       }

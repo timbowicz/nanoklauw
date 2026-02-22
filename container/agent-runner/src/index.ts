@@ -24,6 +24,11 @@ interface ImageRef {
   filename: string;
 }
 
+interface DocumentRef {
+  messageId: string;
+  filename: string;
+}
+
 interface ContainerInput {
   prompt: string;
   sessionId?: string;
@@ -33,6 +38,7 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
   images?: ImageRef[];
+  documents?: DocumentRef[];
 }
 
 interface ContainerOutput {
@@ -55,7 +61,8 @@ interface SessionsIndex {
 
 type ContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+  | { type: 'document'; source: { type: 'base64'; media_type: string; data: string } };
 
 interface SDKUserMessage {
   type: 'user';
@@ -329,32 +336,109 @@ function extToMime(filename: string): string {
   }
 }
 
+/** MIME types that can be inlined as text in the prompt. */
+const TEXT_MIME_PREFIXES = ['text/'];
+const TEXT_MIME_EXACT = new Set([
+  'application/json', 'application/xml', 'application/javascript',
+  'application/x-yaml', 'application/csv',
+]);
+const TEXT_EXTENSIONS = new Set([
+  'txt', 'md', 'json', 'csv', 'xml', 'yaml', 'yml', 'js', 'ts',
+  'py', 'rb', 'sh', 'bash', 'html', 'css', 'toml', 'ini', 'cfg',
+  'log', 'sql', 'java', 'c', 'cpp', 'h', 'go', 'rs',
+]);
+
+/** Check if a document should be inlined as text rather than sent as binary. */
+function isTextDocument(mimeType: string, filename: string): boolean {
+  if (TEXT_MIME_PREFIXES.some(p => mimeType.startsWith(p))) return true;
+  if (TEXT_MIME_EXACT.has(mimeType)) return true;
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  return TEXT_EXTENSIONS.has(ext);
+}
+
+/** Read document metadata sidecar (.meta.json) if available. */
+function readDocumentMeta(filepath: string): { originalFilename: string; mimeType: string } | null {
+  try {
+    const metaPath = `${filepath}.meta.json`;
+    if (fs.existsSync(metaPath)) {
+      return JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+    }
+  } catch {}
+  return null;
+}
+
 /**
- * Build content blocks from prompt text and optional image refs.
- * Reads image files from the IPC media directory and returns
- * Anthropic API content blocks (text + image).
+ * Build content blocks from prompt text and optional image/document refs.
+ * Reads media files from the IPC media directory and returns
+ * Anthropic API content blocks (text + image + document).
  */
 function buildContentBlocks(
   text: string,
   images?: ImageRef[],
+  documents?: DocumentRef[],
 ): string | ContentBlock[] {
-  if (!images || images.length === 0) return text;
+  const hasImages = images && images.length > 0;
+  const hasDocuments = documents && documents.length > 0;
+  if (!hasImages && !hasDocuments) return text;
 
   const blocks: ContentBlock[] = [];
 
-  for (const img of images) {
-    const filepath = path.join(IPC_MEDIA_DIR, img.filename);
-    try {
-      const rawBuffer = fs.readFileSync(filepath);
-      const data = rawBuffer.toString('base64');
-      const mediaType = detectMimeFromBytes(rawBuffer) || extToMime(img.filename);
-      blocks.push({
-        type: 'image',
-        source: { type: 'base64', media_type: mediaType, data },
-      });
-      log(`Loaded image: ${img.filename} (${data.length} base64 chars, ${mediaType})`);
-    } catch (err) {
-      log(`Failed to read image ${img.filename}: ${err instanceof Error ? err.message : String(err)}`);
+  // Add image blocks
+  if (hasImages) {
+    for (const img of images) {
+      const filepath = path.join(IPC_MEDIA_DIR, img.filename);
+      try {
+        const rawBuffer = fs.readFileSync(filepath);
+        const data = rawBuffer.toString('base64');
+        const mediaType = detectMimeFromBytes(rawBuffer) || extToMime(img.filename);
+        blocks.push({
+          type: 'image',
+          source: { type: 'base64', media_type: mediaType, data },
+        });
+        log(`Loaded image: ${img.filename} (${data.length} base64 chars, ${mediaType})`);
+      } catch (err) {
+        log(`Failed to read image ${img.filename}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  // Add document blocks
+  if (hasDocuments) {
+    for (const doc of documents) {
+      const filepath = path.join(IPC_MEDIA_DIR, doc.filename);
+      try {
+        const rawBuffer = fs.readFileSync(filepath);
+        const meta = readDocumentMeta(filepath);
+        const mimeType = meta?.mimeType || 'application/octet-stream';
+        const originalFilename = meta?.originalFilename || doc.filename;
+
+        if (mimeType === 'application/pdf') {
+          // PDFs → Claude native document content block
+          const data = rawBuffer.toString('base64');
+          blocks.push({
+            type: 'document',
+            source: { type: 'base64', media_type: 'application/pdf', data },
+          });
+          log(`Loaded PDF document: ${originalFilename} (${data.length} base64 chars)`);
+        } else if (isTextDocument(mimeType, originalFilename)) {
+          // Text-based files → inline as text block
+          const textContent = rawBuffer.toString('utf-8');
+          blocks.push({
+            type: 'text',
+            text: `[Document: ${originalFilename}]\n${textContent}`,
+          });
+          log(`Loaded text document: ${originalFilename} (${textContent.length} chars)`);
+        } else {
+          // Unsupported binary format → placeholder
+          blocks.push({
+            type: 'text',
+            text: `[Document: ${originalFilename}] (${mimeType} format — cannot be processed directly. The user sent a file in a format that requires conversion to text or PDF first.)`,
+          });
+          log(`Unsupported document format: ${originalFilename} (${mimeType})`);
+        }
+      } catch (err) {
+        log(`Failed to read document ${doc.filename}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 
@@ -365,6 +449,7 @@ function buildContentBlocks(
 interface IpcMessage {
   text: string;
   images?: ImageRef[];
+  documents?: DocumentRef[];
 }
 
 /**
@@ -385,7 +470,7 @@ function drainIpcInput(): IpcMessage[] {
         const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
         fs.unlinkSync(filePath);
         if (data.type === 'message' && data.text) {
-          messages.push({ text: data.text, images: data.images });
+          messages.push({ text: data.text, images: data.images, documents: data.documents });
         }
       } catch (err) {
         log(`Failed to process input file ${file}: ${err instanceof Error ? err.message : String(err)}`);
@@ -412,10 +497,15 @@ function waitForIpcMessage(): Promise<IpcMessage | null> {
       }
       const messages = drainIpcInput();
       if (messages.length > 0) {
-        // Combine all texts; collect all images
+        // Combine all texts; collect all media refs
         const text = messages.map(m => m.text).join('\n');
         const images = messages.flatMap(m => m.images || []);
-        resolve({ text, images: images.length > 0 ? images : undefined });
+        const documents = messages.flatMap(m => m.documents || []);
+        resolve({
+          text,
+          images: images.length > 0 ? images : undefined,
+          documents: documents.length > 0 ? documents : undefined,
+        });
         return;
       }
       setTimeout(poll, IPC_POLL_MS);
@@ -438,9 +528,10 @@ async function runQuery(
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
   images?: ImageRef[],
+  documents?: DocumentRef[],
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   const stream = new MessageStream();
-  stream.push(buildContentBlocks(prompt, images));
+  stream.push(buildContentBlocks(prompt, images, documents));
 
   // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;
@@ -457,7 +548,7 @@ async function runQuery(
     const messages = drainIpcInput();
     for (const ipcMsg of messages) {
       log(`Piping IPC message into active query (${ipcMsg.text.length} chars)`);
-      stream.push(buildContentBlocks(ipcMsg.text, ipcMsg.images));
+      stream.push(buildContentBlocks(ipcMsg.text, ipcMsg.images, ipcMsg.documents));
     }
     setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
   };
@@ -605,6 +696,7 @@ async function main(): Promise<void> {
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
   let currentImages: ImageRef[] | undefined = containerInput.images;
+  let currentDocuments: DocumentRef[] | undefined = containerInput.documents;
   if (containerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
   }
@@ -612,10 +704,14 @@ async function main(): Promise<void> {
   if (pending.length > 0) {
     log(`Draining ${pending.length} pending IPC messages into initial prompt`);
     prompt += '\n' + pending.map(m => m.text).join('\n');
-    // Collect any images from pending IPC messages
+    // Collect any media refs from pending IPC messages
     const pendingImgs = pending.flatMap(m => m.images || []);
     if (pendingImgs.length > 0) {
       currentImages = [...(currentImages || []), ...pendingImgs];
+    }
+    const pendingDocs = pending.flatMap(m => m.documents || []);
+    if (pendingDocs.length > 0) {
+      currentDocuments = [...(currentDocuments || []), ...pendingDocs];
     }
   }
 
@@ -623,10 +719,11 @@ async function main(): Promise<void> {
   let resumeAt: string | undefined;
   try {
     while (true) {
-      log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'}, images: ${currentImages?.length || 0})...`);
+      log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'}, images: ${currentImages?.length || 0}, documents: ${currentDocuments?.length || 0})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, currentImages);
+      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, currentImages, currentDocuments);
       currentImages = undefined; // Images consumed
+      currentDocuments = undefined; // Documents consumed
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }
@@ -654,9 +751,10 @@ async function main(): Promise<void> {
         break;
       }
 
-      log(`Got new message (${nextMessage.text.length} chars, images: ${nextMessage.images?.length || 0}), starting new query`);
+      log(`Got new message (${nextMessage.text.length} chars, images: ${nextMessage.images?.length || 0}, documents: ${nextMessage.documents?.length || 0}), starting new query`);
       prompt = nextMessage.text;
       currentImages = nextMessage.images;
+      currentDocuments = nextMessage.documents;
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);

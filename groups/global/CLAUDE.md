@@ -59,10 +59,12 @@ No ## headings. No [links](url). No **double stars**.
 
 ## Images
 
-When you receive a message with `has-image="true"`, you can see the actual image. After responding, emit a short factual description in an `<image-description>` tag so future conversations can reference it:
+When you receive a message with `has-image="true"`, you can see the actual image. You MUST always emit an `<image-description>` tag for every image — this is how future conversations know what was in the image, since the raw image data is not stored permanently.
+
+Write a detailed, factual description: what's in the image, notable text, colors, people, objects, context. Be thorough — this description is the only record that will survive for future sessions.
 
 ```
-<image-description message-id="MSG_ID">A golden retriever sitting on a red couch</image-description>
+<image-description message-id="MSG_ID">Close-up photo of a hand-written shopping list on yellow lined paper. Items listed: melk, brood, kaas, appels, wasmiddel. The handwriting is in blue ink, slightly slanted. The paper is on a wooden kitchen table with a coffee mug visible in the top-right corner.</image-description>
 ```
 
-The tag is stripped from the user-visible output. Keep descriptions to one sentence.
+The tag is stripped from the user-visible output — users never see it. Emit one tag per image, always using the correct `message-id` from the `has-image` message.

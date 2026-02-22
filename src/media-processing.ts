@@ -11,7 +11,7 @@ import path from 'path';
 import { DATA_DIR } from './config.js';
 import { updateMessageContent } from './db.js';
 import { logger } from './logger.js';
-import { ImageBlock, NewMessage } from './types.js';
+import { DocumentBlock, ImageBlock, NewMessage } from './types.js';
 
 /** Map MIME types to file extensions. Defaults to 'jpg' for unknown types. */
 function mimeToExt(mime: string): string {
@@ -150,6 +150,150 @@ export function buildImageDescription(
     return `[Image: ${description}] ${caption}`;
   }
   return `[Image: ${description}]`;
+}
+
+// --- Document support ---
+
+export interface DocumentRef {
+  messageId: string;
+  filename: string;
+}
+
+/** Max document size before base64 encoding (~25MB raw → ~33MB base64, within Claude's 32MB limit). */
+const MAX_DOCUMENT_SIZE = 25 * 1024 * 1024;
+
+/** Detect document MIME type from magic bytes, falling back to declared MIME. */
+function detectDocumentMime(buffer: Buffer, declaredMime: string): string {
+  if (buffer.length >= 4) {
+    // PDF: %PDF
+    if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) return 'application/pdf';
+  }
+  return declaredMime;
+}
+
+/** Map document MIME type to file extension. */
+function documentMimeToExt(mime: string, filename?: string): string {
+  // Prefer original extension if present
+  if (filename) {
+    const ext = filename.split('.').pop()?.toLowerCase();
+    if (ext && ext.length <= 10) return ext;
+  }
+  switch (mime) {
+    case 'application/pdf': return 'pdf';
+    case 'text/plain': return 'txt';
+    case 'application/json': return 'json';
+    case 'text/csv': return 'csv';
+    case 'text/xml':
+    case 'application/xml': return 'xml';
+    default: return 'bin';
+  }
+}
+
+/**
+ * Download a document from a WhatsApp message and return it as a DocumentBlock.
+ * Returns null if the message has no document or download fails.
+ */
+export async function downloadDocument(
+  msg: WAMessage,
+  sock: WASocket,
+): Promise<DocumentBlock | null> {
+  if (!msg.message?.documentMessage) return null;
+
+  try {
+    const buffer = (await downloadMediaMessage(
+      msg,
+      'buffer',
+      {},
+      {
+        logger: console as any,
+        reuploadRequest: sock.updateMediaMessage,
+      },
+    )) as Buffer;
+
+    if (!buffer || buffer.length === 0) {
+      logger.warn('Failed to download document: empty buffer');
+      return null;
+    }
+
+    if (buffer.length > MAX_DOCUMENT_SIZE) {
+      logger.warn({ size: buffer.length }, 'Document too large, skipping');
+      return null;
+    }
+
+    const declaredMime = msg.message.documentMessage.mimetype || 'application/octet-stream';
+    const mimetype = detectDocumentMime(buffer, declaredMime);
+    const filename = msg.message.documentMessage.fileName || `document.${documentMimeToExt(mimetype)}`;
+
+    logger.info({ size: buffer.length, mimetype, filename }, 'Downloaded document');
+
+    return {
+      type: 'document',
+      media_type: mimetype,
+      data: buffer.toString('base64'),
+      filename,
+    };
+  } catch (err) {
+    logger.error({ err }, 'Failed to download document');
+    return null;
+  }
+}
+
+/**
+ * Write base64 documents from messages to the IPC media directory.
+ * Also writes a .meta.json sidecar with original filename and MIME type.
+ * Returns a list of document refs (messageId -> filename) for the container.
+ */
+export function writeDocumentFiles(
+  groupFolder: string,
+  messages: NewMessage[],
+): DocumentRef[] {
+  const refs: DocumentRef[] = [];
+  const mediaDir = path.join(DATA_DIR, 'ipc', groupFolder, 'media');
+  fs.mkdirSync(mediaDir, { recursive: true });
+
+  for (const msg of messages) {
+    if (!msg.document_data) continue;
+
+    const ext = documentMimeToExt(msg.document_data.media_type, msg.document_data.filename);
+    const safeId = msg.id.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const filename = `doc_${safeId}.${ext}`;
+    const filepath = path.join(mediaDir, filename);
+
+    try {
+      fs.writeFileSync(filepath, Buffer.from(msg.document_data.data, 'base64'));
+      // Write sidecar with metadata
+      fs.writeFileSync(
+        `${filepath}.meta.json`,
+        JSON.stringify({
+          originalFilename: msg.document_data.filename,
+          mimeType: msg.document_data.media_type,
+        }),
+      );
+      // Ensure container (uid 1000) can read the files
+      try { fs.chownSync(filepath, 1000, 1000); } catch {}
+      try { fs.chownSync(`${filepath}.meta.json`, 1000, 1000); } catch {}
+      refs.push({ messageId: msg.id, filename });
+    } catch (err) {
+      logger.error({ err, messageId: msg.id }, 'Failed to write document file');
+    }
+  }
+
+  return refs;
+}
+
+/**
+ * Remove processed document files and their sidecars after the container exits.
+ */
+export function cleanupDocumentFiles(
+  groupFolder: string,
+  refs: DocumentRef[],
+): void {
+  const mediaDir = path.join(DATA_DIR, 'ipc', groupFolder, 'media');
+
+  for (const ref of refs) {
+    try { fs.unlinkSync(path.join(mediaDir, ref.filename)); } catch {}
+    try { fs.unlinkSync(path.join(mediaDir, `${ref.filename}.meta.json`)); } catch {}
+  }
 }
 
 /**
