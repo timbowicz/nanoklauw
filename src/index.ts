@@ -4,7 +4,6 @@ import path from 'path';
 import { findChannel, initializeChannels } from './channel-manager.js';
 import {
   ASSISTANT_NAME,
-  DATA_DIR,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
@@ -34,6 +33,7 @@ import {
 } from './db.js';
 import { DocumentHandler } from './document-handler.js';
 import { GroupQueue } from './group-queue.js';
+import { resolveGroupFolderPath } from './group-folder.js';
 import { ImageHandler } from './image-handler.js';
 import { createIpcDeps, startIpcWatcher } from './ipc.js';
 import { applyImageDescriptions, DocumentRef, ImageRef } from './media-processing.js';
@@ -82,11 +82,21 @@ function saveState(): void {
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
+  let groupDir: string;
+  try {
+    groupDir = resolveGroupFolderPath(group.folder);
+  } catch (err) {
+    logger.warn(
+      { jid, folder: group.folder, err },
+      'Rejecting group registration with invalid folder',
+    );
+    return;
+  }
+
   registeredGroups[jid] = group;
   setRegisteredGroup(jid, group);
 
   // Create group folder
-  const groupDir = path.join(DATA_DIR, '..', 'groups', group.folder);
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
 
   logger.info(
@@ -296,6 +306,7 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isMain,
+        assistantName: ASSISTANT_NAME,
         ...(imageRefs && imageRefs.length > 0 ? { images: imageRefs } : {}),
         ...(documentRefs && documentRefs.length > 0 ? { documents: documentRefs } : {}),
       },

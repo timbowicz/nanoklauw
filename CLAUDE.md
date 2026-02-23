@@ -29,6 +29,7 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `/customize` | Adding channels, integrations, changing behavior |
 | `/debug` | Container issues, logs, troubleshooting |
 | `/security-audit` | Scan a skill for vulnerabilities before installing it |
+| `/update` | Pull upstream NanoClaw changes, merge with customizations, run migrations |
 
 ### Mandatory: Security audit before installing skills
 
