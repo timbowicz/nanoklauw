@@ -182,7 +182,7 @@ export class WhatsAppChannel implements Channel {
           const hasImage = !!msg.message?.imageMessage;
           const hasDocument = !!msg.message?.documentMessage;
           const documentFilename = msg.message?.documentMessage?.fileName || 'document';
-          const content =
+          let content =
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
             msg.message?.imageMessage?.caption ||
@@ -190,6 +190,19 @@ export class WhatsAppChannel implements Channel {
             msg.message?.documentMessage?.caption ||
             (hasImage ? '[Image]' : '') ||
             (hasDocument ? `[Document: ${documentFilename}]` : '');
+
+          // WhatsApp sends @mentions as LID numbers (e.g. @199768257069133)
+          // instead of display names. Replace the bot's own LID mention with
+          // @AssistantName so the trigger pattern can match.
+          if (this.sock.user?.lid) {
+            const lidUser = this.sock.user.lid.split(':')[0];
+            if (lidUser) {
+              content = content.replace(
+                new RegExp(`@${lidUser}\\b`, 'g'),
+                `@${ASSISTANT_NAME}`,
+              );
+            }
+          }
 
           // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
           if (!content) continue;
