@@ -30,6 +30,8 @@ type SlackIncomingMessage = {
   channel_type?: 'channel' | 'group' | 'im' | 'mpim';
 };
 
+const SLACK_MAX_MESSAGE_LENGTH = 3900;
+
 export function shouldIgnoreSlackMessageSubtype(subtype?: string): boolean {
   if (!subtype) return false;
   return subtype !== 'file_share';
@@ -52,6 +54,8 @@ export class SlackChannel implements Channel {
   private botUserId = '';
   private lastUserByChannel = new Map<string, string>();
   private lastEphemeralAtByChannel = new Map<string, number>();
+  private userNameCache = new Map<string, string>();
+  private lastTriggerTs = new Map<string, string>();
 
   constructor(opts: SlackChannelOpts) {
     this.opts = opts;
@@ -133,11 +137,15 @@ export class SlackChannel implements Channel {
         }
       }
 
+      if (m.ts) this.lastTriggerTs.set(chatJid, m.ts);
+
+      const senderName = await this.resolveUserName(sender, client);
+
       this.opts.onMessage(chatJid, {
         id: m.ts || `${chatJid}-${Date.now()}`,
         chat_jid: chatJid,
         sender,
-        sender_name: sender,
+        sender_name: senderName,
         content,
         timestamp,
         is_from_me: false,
@@ -154,7 +162,19 @@ export class SlackChannel implements Channel {
 
   async sendMessage(jid: string, text: string): Promise<void> {
     if (!this.app) return;
-    await this.app.client.chat.postMessage({ channel: jid, text });
+    const threadTs = this.lastTriggerTs.get(jid);
+    try {
+      if (text.length <= SLACK_MAX_MESSAGE_LENGTH) {
+        await this.app.client.chat.postMessage({ channel: jid, text, thread_ts: threadTs });
+      } else {
+        for (let offset = 0; offset < text.length; offset += SLACK_MAX_MESSAGE_LENGTH) {
+          const chunk = text.slice(offset, offset + SLACK_MAX_MESSAGE_LENGTH);
+          await this.app.client.chat.postMessage({ channel: jid, text: chunk, thread_ts: threadTs });
+        }
+      }
+    } catch (err) {
+      logger.error({ err, jid }, 'Failed to send Slack message');
+    }
   }
 
   isConnected(): boolean {
@@ -202,6 +222,21 @@ export class SlackChannel implements Channel {
       logger.warn({ err, chatJid }, 'Could not fetch Slack channel name, using ID fallback');
     }
     return `slack-${chatJid.toLowerCase()}`;
+  }
+
+  private async resolveUserName(userId: string, client: App['client']): Promise<string> {
+    const cached = this.userNameCache.get(userId);
+    if (cached) return cached;
+    try {
+      const result = await client.users.info({ user: userId });
+      const u = result.user as { profile?: { display_name?: string }; real_name?: string; name?: string } | undefined;
+      const name = u?.profile?.display_name || u?.real_name || u?.name || userId;
+      this.userNameCache.set(userId, name);
+      return name;
+    } catch (err) {
+      logger.warn({ err, userId }, 'Could not fetch Slack user name, using ID fallback');
+      return userId;
+    }
   }
 
   private async postEphemeralStatus(chatJid: string, userId: string, text: string): Promise<void> {
