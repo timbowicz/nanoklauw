@@ -34,6 +34,10 @@ Text inside `<internal>` tags is logged but not sent to the user. If you've alre
 
 When working as a sub-agent or teammate, only use `send_message` if instructed to by the main agent.
 
+## Timezone
+
+Your system clock is set to Europe/Amsterdam (CET/CEST). When asked for the current time or date, always use `date` to get the correct local time — do NOT rely on any date injected in your system prompt, as that may be in UTC.
+
 ## Your Workspace
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.
