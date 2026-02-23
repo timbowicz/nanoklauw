@@ -93,10 +93,14 @@ export interface TaskRunLog {
 
 // --- Channel abstraction ---
 
+export interface SendMessageOpts {
+  mentions?: string[];
+}
+
 export interface Channel {
   name: string;
   connect(): Promise<void>;
-  sendMessage(jid: string, text: string): Promise<void>;
+  sendMessage(jid: string, text: string, opts?: SendMessageOpts): Promise<void>;
   isConnected(): boolean;
   ownsJid(jid: string): boolean;
   disconnect(): Promise<void>;

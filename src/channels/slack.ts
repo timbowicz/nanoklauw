@@ -7,6 +7,7 @@ import {
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
+  SendMessageOpts,
 } from '../types.js';
 
 export interface SlackChannelOpts {
@@ -27,10 +28,14 @@ type SlackIncomingMessage = {
   bot_id?: string;
   channel?: string;
   ts?: string;
+  thread_ts?: string;
   channel_type?: 'channel' | 'group' | 'im' | 'mpim';
+  files?: Array<{ name?: string; mimetype?: string }>;
 };
 
 const SLACK_MAX_MESSAGE_LENGTH = 3900;
+const MAX_OUTGOING_QUEUE = 100;
+const MAX_ACTIVE_THREADS = 1000;
 
 export function shouldIgnoreSlackMessageSubtype(subtype?: string): boolean {
   if (!subtype) return false;
@@ -56,6 +61,8 @@ export class SlackChannel implements Channel {
   private lastEphemeralAtByChannel = new Map<string, number>();
   private userNameCache = new Map<string, string>();
   private lastTriggerTs = new Map<string, string>();
+  private botActiveThreads = new Map<string, true>();
+  private outgoingQueue: Array<{ jid: string; text: string; threadTs?: string; mentions?: string[] }> = [];
 
   constructor(opts: SlackChannelOpts) {
     this.opts = opts;
@@ -92,6 +99,15 @@ export class SlackChannel implements Channel {
       this.lastUserByChannel.set(chatJid, sender);
 
       let content = m.text || '';
+
+      // Append file attachment placeholders
+      if (m.files?.length) {
+        for (const f of m.files) {
+          const label = f.mimetype?.startsWith('image/') ? 'Image' : 'File';
+          content += `\n[${label}: ${f.name || 'unnamed'}]`;
+        }
+      }
+
       if (!content.trim()) return;
 
       if (this.isAbortCommand(content)) {
@@ -108,11 +124,12 @@ export class SlackChannel implements Channel {
       const isDm = m.channel_type === 'im' || chatJid.startsWith('D');
       this.opts.onChatMetadata(chatJid, timestamp, undefined, 'slack', !isDm);
 
+      const mentioned = this.botUserId
+        ? content.includes(`<@${this.botUserId}>`)
+        : false;
+
       const existing = this.opts.registeredGroups()[chatJid];
       if (!existing) {
-        const mentioned = this.botUserId
-          ? new RegExp(`<@${this.botUserId}>`).test(content)
-          : false;
         if (!isDm && !mentioned) return;
 
         const channelName = await this.resolveChannelName(chatJid, client);
@@ -130,14 +147,31 @@ export class SlackChannel implements Channel {
         logger.info({ chatJid, channelName, folder }, 'Auto-registered Slack channel as group');
       }
 
-      if (this.botUserId && content.includes(`<@${this.botUserId}>`)) {
+      // Replace bot mention with trigger
+      if (mentioned) {
         content = content.replace(new RegExp(`<@${this.botUserId}>`, 'g'), '').trim();
         if (!TRIGGER_PATTERN.test(content)) {
           content = `@${ASSISTANT_NAME} ${content}`;
         }
       }
 
-      if (m.ts) this.lastTriggerTs.set(chatJid, m.ts);
+      // Track bot-active threads
+      const threadRoot = m.thread_ts || m.ts;
+      if (mentioned && threadRoot) {
+        this.botActiveThreads.set(threadRoot, true);
+        if (this.botActiveThreads.size > MAX_ACTIVE_THREADS) {
+          const oldest = this.botActiveThreads.keys().next().value;
+          if (oldest) this.botActiveThreads.delete(oldest);
+        }
+      }
+
+      // Auto-trigger for replies in bot-active threads
+      if (!mentioned && m.thread_ts && this.botActiveThreads.has(m.thread_ts) && !TRIGGER_PATTERN.test(content)) {
+        content = `@${ASSISTANT_NAME} ${content}`;
+      }
+
+      // Use thread root for replies so they stay in the same thread
+      if (m.ts) this.lastTriggerTs.set(chatJid, m.thread_ts || m.ts);
 
       const senderName = await this.resolveUserName(sender, client);
 
@@ -158,22 +192,51 @@ export class SlackChannel implements Channel {
     this.connected = true;
 
     logger.info({ botUserId: this.botUserId }, 'Connected to Slack (Socket Mode)');
+
+    await this.flushOutgoingQueue();
   }
 
-  async sendMessage(jid: string, text: string): Promise<void> {
+  async sendMessage(jid: string, text: string, opts?: SendMessageOpts): Promise<void> {
     if (!this.app) return;
+
+    // Rewrite @userId → <@userId> for Slack-native mentions
+    let mentionedText = text;
+    if (opts?.mentions?.length) {
+      for (const userId of opts.mentions) {
+        const plain = `@${userId}`;
+        if (mentionedText.includes(plain)) {
+          mentionedText = mentionedText.replaceAll(plain, `<@${userId}>`);
+        }
+      }
+    }
+
     const threadTs = this.lastTriggerTs.get(jid);
     try {
-      if (text.length <= SLACK_MAX_MESSAGE_LENGTH) {
-        await this.app.client.chat.postMessage({ channel: jid, text, thread_ts: threadTs });
+      if (mentionedText.length <= SLACK_MAX_MESSAGE_LENGTH) {
+        await this.app.client.chat.postMessage({ channel: jid, text: mentionedText, thread_ts: threadTs });
       } else {
-        for (let offset = 0; offset < text.length; offset += SLACK_MAX_MESSAGE_LENGTH) {
-          const chunk = text.slice(offset, offset + SLACK_MAX_MESSAGE_LENGTH);
+        for (let offset = 0; offset < mentionedText.length; offset += SLACK_MAX_MESSAGE_LENGTH) {
+          const chunk = mentionedText.slice(offset, offset + SLACK_MAX_MESSAGE_LENGTH);
           await this.app.client.chat.postMessage({ channel: jid, text: chunk, thread_ts: threadTs });
         }
       }
+
+      // Track bot's own message for conversation history (original text, not Slack-formatted)
+      this.opts.onMessage(jid, {
+        id: `bot-${Date.now()}`,
+        chat_jid: jid,
+        sender: this.botUserId || 'bot',
+        sender_name: ASSISTANT_NAME,
+        content: text,
+        timestamp: new Date().toISOString(),
+        is_from_me: true,
+        is_bot_message: true,
+      });
     } catch (err) {
       logger.error({ err, jid }, 'Failed to send Slack message');
+      if (this.outgoingQueue.length < MAX_OUTGOING_QUEUE) {
+        this.outgoingQueue.push({ jid, text, threadTs, mentions: opts?.mentions });
+      }
     }
   }
 
@@ -193,9 +256,19 @@ export class SlackChannel implements Channel {
     }
   }
 
-  async setTyping(_jid: string, _isTyping: boolean): Promise<void> {
-    // Slack doesn't support native typing indicators.
-    // Ephemeral status messages were used as a workaround but are distracting — disabled.
+  async setTyping(jid: string, isTyping: boolean): Promise<void> {
+    if (!this.app) return;
+    const ts = this.lastTriggerTs.get(jid);
+    if (!ts) return;
+    try {
+      if (isTyping) {
+        await this.app.client.reactions.add({ channel: jid, timestamp: ts, name: 'hourglass_flowing_sand' });
+      } else {
+        await this.app.client.reactions.remove({ channel: jid, timestamp: ts, name: 'hourglass_flowing_sand' });
+      }
+    } catch {
+      // Reaction failures are non-critical (message may be deleted, bot may lack permission)
+    }
   }
 
   async syncGroupMetadata(): Promise<void> {
@@ -249,6 +322,47 @@ export class SlackChannel implements Channel {
       });
     } catch (err) {
       logger.debug({ err, chatJid, userId }, 'Failed to post Slack ephemeral status');
+    }
+  }
+
+  private async flushOutgoingQueue(): Promise<void> {
+    if (!this.app || this.outgoingQueue.length === 0) return;
+    const items = [...this.outgoingQueue];
+    this.outgoingQueue.length = 0;
+    for (const { jid, text, threadTs, mentions } of items) {
+      try {
+        // Rewrite @userId → <@userId> for Slack-native mentions
+        let mentionedText = text;
+        if (mentions?.length) {
+          for (const userId of mentions) {
+            const plain = `@${userId}`;
+            if (mentionedText.includes(plain)) {
+              mentionedText = mentionedText.replaceAll(plain, `<@${userId}>`);
+            }
+          }
+        }
+
+        if (mentionedText.length <= SLACK_MAX_MESSAGE_LENGTH) {
+          await this.app.client.chat.postMessage({ channel: jid, text: mentionedText, thread_ts: threadTs });
+        } else {
+          for (let offset = 0; offset < mentionedText.length; offset += SLACK_MAX_MESSAGE_LENGTH) {
+            const chunk = mentionedText.slice(offset, offset + SLACK_MAX_MESSAGE_LENGTH);
+            await this.app.client.chat.postMessage({ channel: jid, text: chunk, thread_ts: threadTs });
+          }
+        }
+        this.opts.onMessage(jid, {
+          id: `bot-${Date.now()}`,
+          chat_jid: jid,
+          sender: this.botUserId || 'bot',
+          sender_name: ASSISTANT_NAME,
+          content: text,
+          timestamp: new Date().toISOString(),
+          is_from_me: true,
+          is_bot_message: true,
+        });
+      } catch (err) {
+        logger.error({ err, jid }, 'Failed to flush queued Slack message (dropped)');
+      }
     }
   }
 }

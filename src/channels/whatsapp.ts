@@ -18,7 +18,7 @@ import {
 } from '../db.js';
 import { logger } from '../logger.js';
 import { downloadDocument, downloadImage } from '../media-processing.js';
-import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
+import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup, SendMessageOpts } from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -35,7 +35,7 @@ export class WhatsAppChannel implements Channel {
   private connected = false;
   private reconnecting = false;
   private lidToPhoneMap: Record<string, string> = {};
-  private outgoingQueue: Array<{ jid: string; text: string }> = [];
+  private outgoingQueue: Array<{ jid: string; text: string; mentions?: string[] }> = [];
   private flushing = false;
   private groupSyncTimerStarted = false;
 
@@ -244,7 +244,7 @@ export class WhatsAppChannel implements Channel {
     });
   }
 
-  async sendMessage(jid: string, text: string): Promise<void> {
+  async sendMessage(jid: string, text: string, opts?: SendMessageOpts): Promise<void> {
     // Prefix bot messages with assistant name so users know who's speaking.
     // On a shared number, prefix is also needed in DMs (including self-chat)
     // to distinguish bot output from user messages.
@@ -253,17 +253,26 @@ export class WhatsAppChannel implements Channel {
       ? text
       : `${ASSISTANT_NAME}: ${text}`;
 
+    const mentions = opts?.mentions;
+
     if (!this.connected) {
-      this.outgoingQueue.push({ jid, text: prefixed });
+      this.outgoingQueue.push({ jid, text: prefixed, mentions });
       logger.info({ jid, length: prefixed.length, queueSize: this.outgoingQueue.length }, 'WA disconnected, message queued');
       return;
     }
     try {
-      await this.sock.sendMessage(jid, { text: prefixed });
+      const resolved = mentions?.length
+        ? await this.resolveMentions(jid, prefixed, mentions)
+        : undefined;
+      if (resolved) {
+        await this.sock.sendMessage(jid, { text: resolved.text, mentions: resolved.resolvedJids });
+      } else {
+        await this.sock.sendMessage(jid, { text: prefixed });
+      }
       logger.info({ jid, length: prefixed.length }, 'Message sent');
     } catch (err) {
       // If send fails, queue it for retry on reconnect
-      this.outgoingQueue.push({ jid, text: prefixed });
+      this.outgoingQueue.push({ jid, text: prefixed, mentions });
       logger.warn({ jid, err, queueSize: this.outgoingQueue.length }, 'Failed to send, message queued');
     }
   }
@@ -364,6 +373,73 @@ export class WhatsAppChannel implements Channel {
     }
   }
 
+  /**
+   * Resolve phone-number mentions to WhatsApp JIDs for clickable @mentions.
+   * For groups, fetches participant metadata to map phone numbers to JIDs.
+   * Returns resolved JIDs and rewritten text, or undefined on failure.
+   */
+  private async resolveMentions(
+    chatJid: string,
+    text: string,
+    mentions: string[],
+  ): Promise<{ resolvedJids: string[]; text: string } | undefined> {
+    try {
+      const resolvedJids: string[] = [];
+      let rewritten = text;
+
+      if (chatJid.endsWith('@g.us')) {
+        // Build phone→JID map from group participants
+        const metadata = await this.sock.groupMetadata(chatJid);
+        const phoneToJid = new Map<string, string>();
+        for (const p of metadata.participants) {
+          // p.id is the participant JID (e.g. "1234567890@s.whatsapp.net" or LID)
+          const phoneFromId = p.id.split('@')[0].split(':')[0];
+          phoneToJid.set(phoneFromId, p.id);
+        }
+
+        // Also use reversed lidToPhoneMap as fallback
+        const lidToPhone = this.lidToPhoneMap;
+        for (const [lid, phoneJid] of Object.entries(lidToPhone)) {
+          const phone = phoneJid.split('@')[0];
+          if (!phoneToJid.has(phone)) {
+            // Find participant with this LID
+            for (const p of metadata.participants) {
+              const pLid = p.id.split('@')[0].split(':')[0];
+              if (pLid === lid) {
+                phoneToJid.set(phone, p.id);
+              }
+            }
+          }
+        }
+
+        for (const mention of mentions) {
+          const cleaned = mention.replace(/[^0-9]/g, '');
+          const jid = phoneToJid.get(cleaned);
+          if (jid) {
+            resolvedJids.push(jid);
+            // Rewrite @phone to @resolvedId for clickable display
+            rewritten = rewritten.replaceAll(`@${mention}`, `@${jid.split('@')[0].split(':')[0]}`);
+          } else {
+            // Fall back to constructing a JID from the phone number
+            const fallbackJid = `${cleaned}@s.whatsapp.net`;
+            resolvedJids.push(fallbackJid);
+          }
+        }
+      } else {
+        // DM/solo chat: construct JIDs directly from phone numbers
+        for (const mention of mentions) {
+          const cleaned = mention.replace(/[^0-9]/g, '');
+          resolvedJids.push(`${cleaned}@s.whatsapp.net`);
+        }
+      }
+
+      return resolvedJids.length > 0 ? { resolvedJids, text: rewritten } : undefined;
+    } catch (err) {
+      logger.warn({ err, chatJid, mentionCount: mentions.length }, 'Failed to resolve mentions, sending without');
+      return undefined;
+    }
+  }
+
   private async translateJid(jid: string): Promise<string> {
     if (!jid.endsWith('@lid')) return jid;
     const lidUser = jid.split('@')[0].split(':')[0];
@@ -399,7 +475,14 @@ export class WhatsAppChannel implements Channel {
       while (this.outgoingQueue.length > 0) {
         const item = this.outgoingQueue.shift()!;
         // Send directly — queued items are already prefixed by sendMessage
-        await this.sock.sendMessage(item.jid, { text: item.text });
+        const resolved = item.mentions?.length
+          ? await this.resolveMentions(item.jid, item.text, item.mentions)
+          : undefined;
+        if (resolved) {
+          await this.sock.sendMessage(item.jid, { text: resolved.text, mentions: resolved.resolvedJids });
+        } else {
+          await this.sock.sendMessage(item.jid, { text: item.text });
+        }
         logger.info({ jid: item.jid, length: item.text.length }, 'Queued message sent');
       }
     } finally {

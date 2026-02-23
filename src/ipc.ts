@@ -14,10 +14,10 @@ import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
-import { Channel, RegisteredGroup } from './types.js';
+import { Channel, RegisteredGroup, SendMessageOpts } from './types.js';
 
 export interface IpcDeps {
-  sendMessage: (jid: string, text: string) => Promise<void>;
+  sendMessage: (jid: string, text: string, opts?: SendMessageOpts) => Promise<void>;
   sendImage: (jid: string, image: Buffer, caption?: string) => Promise<void>;
   sendDocument: (jid: string, document: Buffer, filename: string, caption?: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
@@ -36,7 +36,7 @@ export interface IpcDeps {
  * Build IpcDeps from channels array and app-level callbacks.
  * Extracts the inline closure construction from index.ts main().
  */
-export function createIpcDeps(opts: {
+export function createIpcDeps(cfg: {
   channels: Channel[];
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
@@ -44,13 +44,13 @@ export function createIpcDeps(opts: {
   writeGroupsSnapshot: IpcDeps['writeGroupsSnapshot'];
 }): IpcDeps {
   return {
-    sendMessage: (jid, text) => {
-      const channel = findChannel(opts.channels, jid);
+    sendMessage: (jid, text, opts) => {
+      const channel = findChannel(cfg.channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      return channel.sendMessage(jid, text);
+      return channel.sendMessage(jid, text, opts);
     },
     sendImage: (jid, image, caption) => {
-      const channel = findChannel(opts.channels, jid);
+      const channel = findChannel(cfg.channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       if (!channel.sendImage)
         throw new Error(
@@ -59,7 +59,7 @@ export function createIpcDeps(opts: {
       return channel.sendImage(jid, image, caption);
     },
     sendDocument: (jid, document, filename, caption) => {
-      const channel = findChannel(opts.channels, jid);
+      const channel = findChannel(cfg.channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       if (!channel.sendDocument)
         throw new Error(
@@ -67,14 +67,14 @@ export function createIpcDeps(opts: {
         );
       return channel.sendDocument(jid, document, filename, caption);
     },
-    registeredGroups: opts.registeredGroups,
-    registerGroup: opts.registerGroup,
+    registeredGroups: cfg.registeredGroups,
+    registerGroup: cfg.registerGroup,
     syncGroupMetadata: (force) =>
       Promise.all(
-        opts.channels.map((ch) => ch.syncGroupMetadata?.(force)),
+        cfg.channels.map((ch) => ch.syncGroupMetadata?.(force)),
       ).then(() => {}),
-    getAvailableGroups: opts.getAvailableGroups,
-    writeGroupsSnapshot: opts.writeGroupsSnapshot,
+    getAvailableGroups: cfg.getAvailableGroups,
+    writeGroupsSnapshot: cfg.writeGroupsSnapshot,
   };
 }
 
@@ -104,7 +104,7 @@ function resolveIpcPath(containerPath: string, sourceGroup: string): string | nu
 }
 
 async function handleIpcMessage(
-  data: { chatJid: string; text: string },
+  data: { chatJid: string; text: string; mentions?: string[] },
   sourceGroup: string,
   isMain: boolean,
   deps: IpcDeps,
@@ -112,7 +112,8 @@ async function handleIpcMessage(
 ): Promise<void> {
   const targetGroup = registeredGroups[data.chatJid];
   if (canAccessJid(sourceGroup, targetGroup?.folder, isMain)) {
-    await deps.sendMessage(data.chatJid, data.text);
+    const opts = data.mentions?.length ? { mentions: data.mentions } : undefined;
+    await deps.sendMessage(data.chatJid, data.text, opts);
     logger.info({ chatJid: data.chatJid, sourceGroup }, 'IPC message sent');
   } else {
     logger.warn(

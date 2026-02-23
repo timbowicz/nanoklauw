@@ -47,13 +47,17 @@ server.tool(
   {
     text: z.string().describe('The message text to send'),
     sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
+    mentions: z.array(z.string()).optional().describe(
+      'User identifiers to @mention (phone numbers for WhatsApp, Slack user IDs for Slack). Include the corresponding @identifier in the text.',
+    ),
   },
   async (args) => {
-    const data: Record<string, string | undefined> = {
+    const data: Record<string, string | string[] | undefined> = {
       type: 'message',
       chatJid,
       text: args.text,
       sender: args.sender || undefined,
+      mentions: args.mentions,
       groupFolder,
       timestamp: new Date().toISOString(),
     };
