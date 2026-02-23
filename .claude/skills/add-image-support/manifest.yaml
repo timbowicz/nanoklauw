@@ -5,6 +5,7 @@ core_version: 0.1.0
 adds:
   - src/image-handler.ts
   - src/media-processing.ts
+  - src/document-handler.ts
 modifies:
   - src/index.ts
   - src/types.ts
