@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
+import { maybeAutoRegister } from './auto-register.js';
 import { findChannel, initializeChannels } from './channel-manager.js';
 import {
   ASSISTANT_NAME,
@@ -509,8 +510,10 @@ async function main(): Promise<void> {
       }
       storeMessage(msg);
     },
-    onChatMetadata: (chatJid: string, timestamp: string, name?: string, channel?: string, isGroup?: boolean) =>
-      storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
+    onChatMetadata: (chatJid: string, timestamp: string, name?: string, channel?: string, isGroup?: boolean) => {
+      storeChatMetadata(chatJid, timestamp, name, channel, isGroup);
+      maybeAutoRegister(chatJid, name, isGroup, registeredGroups, registerGroup);
+    },
     registeredGroups: () => registeredGroups,
     registerGroup,
     onAbort: async (chatJid: string): Promise<boolean> => queue.abortGroup(chatJid),
