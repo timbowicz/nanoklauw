@@ -1,16 +1,20 @@
 ---
 name: nano-banana
-description: Generate and send AI images. Use when the user asks to generate, create, or make an image/picture/photo.
+description: Generate and send AI images, or edit existing images. Use when the user asks to generate, create, make, or edit an image/picture/photo.
 ---
 
-# Image Generation
+# Image Generation & Editing
 
-You have two MCP tools for image generation and sending:
+You have MCP tools for image generation, editing, and sending:
 
 ## Workflow
 
+**New image from scratch:**
 1. Call `generate_image` with the user's prompt
-2. Call `send_image` for each generated image
+
+**Edit an existing image (e.g., user sent a photo):**
+1. Call `edit_image` with the image path and editing instructions
+   - The input image is typically in `/workspace/ipc/media/` (received media from the chat)
 
 ## generate_image
 
@@ -20,6 +24,19 @@ You have two MCP tools for image generation and sending:
 | `model` | `fast` | `fast` $0.02, `standard` $0.04, `ultra` $0.06 |
 | `aspect_ratio` | `1:1` | `1:1`, `3:4`, `4:3`, `9:16`, `16:9` |
 | `number_of_images` | `1` | 1-4 per call |
+
+## edit_image
+
+Edit/transform an existing image using AI. Use when a user sends a photo and wants modifications.
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| `prompt` | (required) | English editing instruction. Be specific about changes. |
+| `image_path` | (required) | Path to input image (e.g., `/workspace/ipc/media/abc123.jpg`) |
+| `model` | `gemini-2.5-flash-image` | `gemini-2.5-flash-image` (fast/cheap) or `gemini-3-pro-image-preview` (higher quality) |
+| `caption` | (optional) | Caption to send with the edited image |
+
+**When to use:** User sends a photo and asks for changes — "make this more modern", "change the color", "add plants", "redesign this room", etc.
 
 ## send_image
 

@@ -360,6 +360,125 @@ IMPORTANT:
 );
 
 server.tool(
+  'edit_image',
+  `Edit/transform an existing image using AI. Takes an input image and a text prompt describing the desired changes, and generates a modified version.
+
+Use this when:
+• A user sends a photo and wants it modified (e.g., "make this room more modern", "change the wall color to blue")
+• You need to apply design changes to an existing image
+• The user wants a variation of an existing image with specific changes
+
+The prompt must be in English. Translate if needed. Be specific about what to change.
+The input image must exist on disk (e.g., received media in /workspace/ipc/media/).`,
+  {
+    prompt: z.string().describe('English editing instruction describing what to change (e.g., "Change the wall color to light blue and add modern furniture")'),
+    image_path: z.string().describe('Absolute path to the input image file (e.g., /workspace/ipc/media/abc123.jpg)'),
+    model: z.enum(['gemini-2.5-flash-image', 'gemini-3-pro-image-preview'])
+      .default('gemini-2.5-flash-image')
+      .describe('Gemini model for image editing. gemini-2.5-flash-image is fast and cheap, gemini-3-pro-image-preview is higher quality.'),
+    caption: z.string().optional().describe('Optional caption to send with the edited image'),
+  },
+  async (args) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return {
+        content: [{ type: 'text' as const, text: 'GEMINI_API_KEY is not configured. Cannot edit images.' }],
+        isError: true,
+      };
+    }
+
+    if (!fs.existsSync(args.image_path)) {
+      return {
+        content: [{ type: 'text' as const, text: `Input image not found: ${args.image_path}` }],
+        isError: true,
+      };
+    }
+
+    try {
+      // Read input image and convert to base64
+      const imageBuffer = fs.readFileSync(args.image_path);
+      const base64Image = imageBuffer.toString('base64');
+
+      // Detect MIME type from extension
+      const ext = path.extname(args.image_path).toLowerCase();
+      const mimeMap: Record<string, string> = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.webp': 'image/webp',
+        '.gif': 'image/gif',
+      };
+      const mimeType = mimeMap[ext] || 'image/jpeg';
+
+      const genai = new GoogleGenAI({ apiKey });
+      const response = await genai.models.generateContent({
+        model: args.model,
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { inlineData: { mimeType, data: base64Image } },
+              { text: args.prompt },
+            ],
+          },
+        ],
+        config: {
+          responseModalities: ['TEXT', 'IMAGE'],
+        },
+      });
+
+      // Extract output image from response
+      const parts = response.candidates?.[0]?.content?.parts;
+      if (!parts) {
+        return {
+          content: [{ type: 'text' as const, text: 'Image editing returned no results. The prompt may have been blocked by safety filters. Try rephrasing.' }],
+          isError: true,
+        };
+      }
+
+      const imagePart = parts.find((p: { inlineData?: { mimeType?: string; data?: string } }) => p.inlineData?.mimeType?.startsWith('image/'));
+      if (!imagePart?.inlineData?.data) {
+        // Return any text response if no image was generated
+        const textPart = parts.find((p: { text?: string }) => p.text);
+        const textMsg = textPart?.text || 'No image in response';
+        return {
+          content: [{ type: 'text' as const, text: `Image editing did not produce an image. Model response: ${textMsg}` }],
+          isError: true,
+        };
+      }
+
+      // Write output image to media directory
+      fs.mkdirSync(MEDIA_DIR, { recursive: true });
+      const outputBuffer = Buffer.from(imagePart.inlineData.data, 'base64');
+      const outputFilename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`;
+      const outputPath = path.join(MEDIA_DIR, outputFilename);
+      fs.writeFileSync(outputPath, outputBuffer);
+
+      // Write IPC file to send the image
+      const ipcData = {
+        type: 'send_image',
+        chatJid,
+        imagePath: `/workspace/ipc/media/${outputFilename}`,
+        caption: args.caption || undefined,
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      };
+      writeIpcFile(MESSAGES_DIR, ipcData);
+
+      return {
+        content: [{ type: 'text' as const, text: `Image edited and sent (${args.model}, ${outputBuffer.length} bytes).` }],
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{ type: 'text' as const, text: `Image editing failed: ${msg}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
   'send_image',
   'Send an existing image file from the workspace to the chat. Use generate_image for AI-generated images.',
   {
