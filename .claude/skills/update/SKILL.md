@@ -93,7 +93,7 @@ Parse the JSON output. The result has: `success`, `previousVersion`, `newVersion
 
 **If skillReapplyResults has false entries:** Warn the user which skill tests failed after re-application.
 
-## 6. Handle conflicts
+## 6. Handle file-level conflicts
 
 **If backupPending=true:** There are unresolved merge conflicts.
 
@@ -113,7 +113,32 @@ This clears the backup, confirming the resolution.
 
 **If you cannot confidently resolve a conflict:** Show the user the conflicting sections and ask them to choose or provide guidance.
 
-## 7. Run migrations
+## 7. Sync git history
+
+The file-level update (steps 3–6) ensures content is correct with skill-aware conflict resolution, but it doesn't sync the git commit graph. Run a git merge to bring upstream commits into the local history:
+
+```bash
+git merge upstream/main --no-edit
+```
+
+**If merge succeeds with no conflicts:** Continue to step 8.
+
+**If merge has conflicts:** These should be rare since the file contents were already updated in step 5. For each conflicting file, accept the current working tree version (which is already correct from the file-level update):
+
+```bash
+git checkout --theirs <file>   # or resolve manually if needed
+git add <file>
+```
+
+After resolving all conflicts:
+
+```bash
+git merge --continue --no-edit
+```
+
+**If the merge reports "Already up to date":** This is fine — it means the git history was already in sync. Continue silently.
+
+## 8. Run migrations
 
 Run migrations between the old and new versions:
 
@@ -127,7 +152,7 @@ Parse the JSON output. It contains: `migrationsRun` (count), `results` (array of
 
 **If no migrations found:** This is normal (most updates won't have migrations). Continue silently.
 
-## 8. Verify
+## 9. Verify
 
 Run build and tests:
 
@@ -143,7 +168,7 @@ npm run build && npm test
 
 **If both pass:** Report success.
 
-## 9. Cleanup
+## 10. Cleanup
 
 Remove the temp directory:
 
