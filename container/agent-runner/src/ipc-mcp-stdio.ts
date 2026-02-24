@@ -562,6 +562,124 @@ server.tool(
   },
 );
 
+// --- Network proxy tools (only for containers with --network none) ---
+
+const INPUT_DIR = path.join(IPC_DIR, 'input');
+const isNetworkProxied = process.env.NETWORK_PROXY === 'true';
+
+if (isNetworkProxied) {
+  server.tool(
+    'web_fetch',
+    `Fetch content from a URL. This request goes through the host and may require user approval.
+The user will be notified and asked to approve the request. Approved domains are remembered for future requests.
+If denied, you'll get an error message — inform the user accordingly.`,
+    {
+      url: z.string().url().describe('The URL to fetch'),
+      prompt: z.string().optional().describe('What to extract from the page (not used in proxy mode, but kept for compatibility)'),
+    },
+    async (args) => {
+      const requestId = `fetch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      writeIpcFile(TASKS_DIR, {
+        type: 'proxy_web_fetch',
+        requestId,
+        url: args.url,
+        prompt: args.prompt || undefined,
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Poll for response
+      const responseFile = path.join(INPUT_DIR, `proxy-response-${requestId}.json`);
+      const timeout = 6 * 60 * 1000; // 6 minutes (exceeds 5 min approval window)
+      const pollInterval = 1000;
+      const start = Date.now();
+
+      while (Date.now() - start < timeout) {
+        if (fs.existsSync(responseFile)) {
+          try {
+            const response = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+            fs.unlinkSync(responseFile);
+
+            if (response.status === 'approved' && response.result) {
+              return { content: [{ type: 'text' as const, text: response.result }] };
+            } else if (response.error) {
+              return { content: [{ type: 'text' as const, text: response.error }], isError: true };
+            } else {
+              return { content: [{ type: 'text' as const, text: 'Request was denied.' }], isError: true };
+            }
+          } catch (err) {
+            return {
+              content: [{ type: 'text' as const, text: `Failed to read proxy response: ${err}` }],
+              isError: true,
+            };
+          }
+        }
+        await new Promise((r) => setTimeout(r, pollInterval));
+      }
+
+      return {
+        content: [{ type: 'text' as const, text: 'Network proxy request timed out waiting for approval.' }],
+        isError: true,
+      };
+    },
+  );
+
+  server.tool(
+    'web_search',
+    `Search the web. This request goes through the host and requires user approval.
+The user will be notified and asked to approve each search.
+If denied, you'll get an error message — inform the user accordingly.`,
+    {
+      query: z.string().describe('The search query'),
+    },
+    async (args) => {
+      const requestId = `search-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      writeIpcFile(TASKS_DIR, {
+        type: 'proxy_web_search',
+        requestId,
+        query: args.query,
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      });
+
+      const responseFile = path.join(INPUT_DIR, `proxy-response-${requestId}.json`);
+      const timeout = 6 * 60 * 1000;
+      const pollInterval = 1000;
+      const start = Date.now();
+
+      while (Date.now() - start < timeout) {
+        if (fs.existsSync(responseFile)) {
+          try {
+            const response = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+            fs.unlinkSync(responseFile);
+
+            if (response.status === 'approved' && response.result) {
+              return { content: [{ type: 'text' as const, text: response.result }] };
+            } else if (response.error) {
+              return { content: [{ type: 'text' as const, text: response.error }], isError: true };
+            } else {
+              return { content: [{ type: 'text' as const, text: 'Search request was denied.' }], isError: true };
+            }
+          } catch (err) {
+            return {
+              content: [{ type: 'text' as const, text: `Failed to read proxy response: ${err}` }],
+              isError: true,
+            };
+          }
+        }
+        await new Promise((r) => setTimeout(r, pollInterval));
+      }
+
+      return {
+        content: [{ type: 'text' as const, text: 'Web search request timed out waiting for approval.' }],
+        isError: true,
+      };
+    },
+  );
+}
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);
