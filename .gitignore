@@ -36,3 +36,6 @@ agents-sdk-docs
 
 # Embedded git repos
 container/tribe-mcp/
+
+# Worktrees
+.worktrees/
