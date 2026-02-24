@@ -243,7 +243,13 @@ function readSecrets(): Record<string, string> {
   return readEnvFile(CONTAINER_SECRETS);
 }
 
-function buildContainerArgs(mounts: VolumeMount[], containerName: string, bitwarden: boolean): string[] {
+function buildContainerArgs(
+  mounts: VolumeMount[],
+  containerName: string,
+  bitwarden: boolean,
+  isMain: boolean,
+  networkMode?: 'full' | 'none',
+): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName,
     '--memory', '2g',
     '--pids-limit', '256',
@@ -276,6 +282,14 @@ function buildContainerArgs(mounts: VolumeMount[], containerName: string, bitwar
     if (secrets.BW_PASSWORD) args.push('-e', `BW_PASSWORD=${secrets.BW_PASSWORD}`);
   }
 
+  // Network isolation: non-main containers default to --network none
+  // Main containers keep full network (WebFetch/WebSearch need it)
+  const effectiveNetworkMode = networkMode ?? (isMain ? 'full' : 'none');
+  if (effectiveNetworkMode === 'none') {
+    args.push('--network', 'none');
+    args.push('-e', 'NETWORK_PROXY=true');
+  }
+
   for (const mount of mounts) {
     if (mount.readonly) {
       args.push(...readonlyMountArgs(mount.hostPath, mount.containerPath));
@@ -303,7 +317,13 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName, !!group.containerConfig?.bitwarden);
+  const containerArgs = buildContainerArgs(
+    mounts,
+    containerName,
+    !!group.containerConfig?.bitwarden,
+    input.isMain,
+    group.containerConfig?.networkMode,
+  );
 
   logger.debug(
     {
