@@ -29,12 +29,16 @@ export interface WhatsAppChannelOpts {
   registeredGroups: () => Record<string, RegisteredGroup>;
 }
 
+const BASE_RECONNECT_MS = 2_000;
+const MAX_RECONNECT_MS = 5 * 60_000; // 5 minutes
+
 export class WhatsAppChannel implements Channel {
   name = 'whatsapp';
 
   private sock!: WASocket;
   private connected = false;
   private reconnecting = false;
+  private reconnectAttempt = 0;
   private lidToPhoneMap: Record<string, string> = {};
   private outgoingQueue: Array<{ jid: string; text: string; mentions?: string[] }> = [];
   private flushing = false;
@@ -100,18 +104,18 @@ export class WhatsAppChannel implements Channel {
           this.reconnecting = true;
           // Close old socket to prevent conflict loops
           try { this.sock?.end(undefined); } catch {}
-          logger.info('Reconnecting in 3s...');
+          const delayMs = Math.min(
+            BASE_RECONNECT_MS * Math.pow(2, this.reconnectAttempt),
+            MAX_RECONNECT_MS,
+          );
+          this.reconnectAttempt++;
+          logger.info({ attempt: this.reconnectAttempt, delayMs }, 'Reconnecting after delay...');
           setTimeout(() => {
             this.connectInternal().catch((err) => {
-              logger.error({ err }, 'Failed to reconnect, retrying in 5s');
-              setTimeout(() => {
-                this.connectInternal().catch((err2) => {
-                  logger.error({ err: err2 }, 'Reconnection retry failed');
-                  this.reconnecting = false;
-                });
-              }, 5000);
+              logger.error({ err }, 'Failed to reconnect');
+              this.reconnecting = false;
             });
-          }, 3000);
+          }, delayMs);
         } else {
           logger.info('Logged out. Run /setup to re-authenticate.');
           process.exit(0);
@@ -119,6 +123,7 @@ export class WhatsAppChannel implements Channel {
       } else if (connection === 'open') {
         this.connected = true;
         this.reconnecting = false;
+        this.reconnectAttempt = 0;
         logger.info('Connected to WhatsApp');
 
         // Announce availability so WhatsApp relays subsequent presence updates (typing indicators)
