@@ -170,8 +170,8 @@ export class SlackChannel implements Channel {
         content = `@${ASSISTANT_NAME} ${content}`;
       }
 
-      // Use thread root for replies so they stay in the same thread
-      if (m.ts) this.lastTriggerTs.set(chatJid, m.thread_ts || m.ts);
+      // Only thread replies when the bot was explicitly @mentioned
+      if (mentioned && m.ts) this.lastTriggerTs.set(chatJid, m.thread_ts || m.ts);
 
       const senderName = await this.resolveUserName(sender, client);
 
