@@ -243,7 +243,7 @@ function readSecrets(): Record<string, string> {
   return readEnvFile(CONTAINER_SECRETS);
 }
 
-function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
+function buildContainerArgs(mounts: VolumeMount[], containerName: string, bitwarden: boolean): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName,
     '--memory', '2g',
     '--pids-limit', '256',
@@ -268,6 +268,13 @@ function buildContainerArgs(mounts: VolumeMount[], containerName: string): strin
   args.push('-e', 'DISABLE_ERROR_REPORTING=1');
   args.push('-e', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1');
 
+  // Bitwarden credentials for entrypoint login/unlock
+  if (bitwarden) {
+    const secrets = readSecrets();
+    if (secrets.BW_CLIENTID) args.push('-e', `BW_CLIENTID=${secrets.BW_CLIENTID}`);
+    if (secrets.BW_CLIENTSECRET) args.push('-e', `BW_CLIENTSECRET=${secrets.BW_CLIENTSECRET}`);
+    if (secrets.BW_PASSWORD) args.push('-e', `BW_PASSWORD=${secrets.BW_PASSWORD}`);
+  }
 
   for (const mount of mounts) {
     if (mount.readonly) {
@@ -296,7 +303,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(mounts, containerName, !!group.containerConfig?.bitwarden);
 
   logger.debug(
     {
