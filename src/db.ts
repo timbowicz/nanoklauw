@@ -77,6 +77,12 @@ function createSchema(database: Database.Database): void {
       container_config TEXT,
       requires_trigger INTEGER DEFAULT 1
     );
+
+    CREATE TABLE IF NOT EXISTS network_allowlist (
+      domain TEXT PRIMARY KEY,
+      approved_by TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -631,6 +637,31 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- Network allowlist ---
+
+export function isAllowlisted(domain: string): boolean {
+  const row = db
+    .prepare('SELECT 1 FROM network_allowlist WHERE domain = ?')
+    .get(domain);
+  return !!row;
+}
+
+export function addToAllowlist(domain: string, approvedBy: string): void {
+  db.prepare(
+    `INSERT OR IGNORE INTO network_allowlist (domain, approved_by, created_at) VALUES (?, ?, ?)`,
+  ).run(domain, approvedBy, new Date().toISOString());
+}
+
+export function removeFromAllowlist(domain: string): void {
+  db.prepare('DELETE FROM network_allowlist WHERE domain = ?').run(domain);
+}
+
+export function getAllAllowlisted(): Array<{ domain: string; approved_by: string; created_at: string }> {
+  return db
+    .prepare('SELECT domain, approved_by, created_at FROM network_allowlist ORDER BY created_at')
+    .all() as Array<{ domain: string; approved_by: string; created_at: string }>;
 }
 
 // --- JSON migration ---
