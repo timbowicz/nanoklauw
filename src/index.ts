@@ -40,6 +40,7 @@ import { createIpcDeps, startIpcWatcher } from './ipc.js';
 import { applyImageDescriptions, DocumentRef, ImageRef } from './media-processing.js';
 import { formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
+import { handleApprovalResponse, getPendingApprovalIds } from './network-proxy.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
@@ -502,6 +503,20 @@ async function main(): Promise<void> {
   // Create and connect channels
   channels = await initializeChannels({
     onMessage: (_chatJid: string, msg: NewMessage) => {
+      // Check if this is a reply to a pending network proxy approval
+      if (msg.quotedMessageId && !msg.is_bot_message) {
+        const pendingIds = getPendingApprovalIds();
+        if (pendingIds.has(msg.quotedMessageId)) {
+          const text = msg.content.toLowerCase().trim();
+          const isApproval = /^(yes|y|approve|ok|👍)$/i.test(text);
+          const isDenial = /^(no|n|deny|reject|👎)$/i.test(text);
+          if (isApproval || isDenial) {
+            handleApprovalResponse(msg.quotedMessageId, isApproval);
+            return; // Don't store or process as a regular message
+          }
+        }
+      }
+
       if (msg.image_data) {
         imageHandler.storeImage(msg.id, msg.image_data);
       }
