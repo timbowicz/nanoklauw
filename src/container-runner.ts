@@ -194,6 +194,20 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Bitwarden CLI cache: persistent vault data so bw doesn't re-sync from scratch
+  if (group.containerConfig?.bitwarden) {
+    const bwCacheDir = path.join(DATA_DIR, 'bitwarden', group.folder);
+    fs.mkdirSync(bwCacheDir, { recursive: true });
+    try {
+      fs.chownSync(bwCacheDir, 1000, 1000);
+    } catch {}
+    mounts.push({
+      hostPath: bwCacheDir,
+      containerPath: '/home/node/.config/Bitwarden CLI',
+      readonly: false,
+    });
+  }
+
   // Copy agent-runner source into a per-group writable location so agents
   // can customize it (add tools, change behavior) without affecting other
   // groups. Recompiled on container startup via entrypoint.sh.
