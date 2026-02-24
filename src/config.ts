@@ -83,6 +83,9 @@ export const CONTAINER_SECRETS = [
   'HA_TOKEN',
   'TRIBE_CLIENT_ID',
   'TRIBE_CLIENT_SECRET',
+  'BW_CLIENTID',
+  'BW_CLIENTSECRET',
+  'BW_PASSWORD',
 ];
 
 // Slack configuration
