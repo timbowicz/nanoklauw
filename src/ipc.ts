@@ -30,6 +30,8 @@ export interface IpcDeps {
     availableGroups: AvailableGroup[],
     registeredJids: Set<string>,
   ) => void;
+  sendMessageWithId?: (jid: string, text: string) => Promise<string | undefined>;
+  getMainChatJid?: () => string | undefined;
 }
 
 /**
@@ -75,6 +77,16 @@ export function createIpcDeps(cfg: {
       ).then(() => {}),
     getAvailableGroups: cfg.getAvailableGroups,
     writeGroupsSnapshot: cfg.writeGroupsSnapshot,
+    sendMessageWithId: (jid, text) => {
+      const channel = findChannel(cfg.channels, jid);
+      if (!channel?.sendMessageWithId) return Promise.resolve(undefined);
+      return channel.sendMessageWithId(jid, text);
+    },
+    getMainChatJid: () => {
+      const groups = cfg.registeredGroups();
+      const mainEntry = Object.entries(groups).find(([, g]) => g.folder === MAIN_GROUP_FOLDER);
+      return mainEntry?.[0]; // The JID is the key
+    },
   };
 }
 
@@ -420,6 +432,10 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For proxy requests
+    requestId?: string;
+    url?: string;
+    query?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -630,6 +646,46 @@ export async function processTaskIpc(
         );
       }
       break;
+
+    case 'proxy_web_fetch': {
+      if (!isMain && data.requestId && data.url) {
+        const { handleProxyWebFetch } = await import('./network-proxy.js');
+        await handleProxyWebFetch(
+          { requestId: data.requestId, url: data.url, prompt: data.prompt },
+          sourceGroup,
+          {
+            sendMessageWithId: deps.sendMessageWithId!,
+            getMainChatJid: deps.getMainChatJid!,
+            getGroupName: (folder) => {
+              const groups = deps.registeredGroups();
+              const entry = Object.values(groups).find(g => g.folder === folder);
+              return entry?.name || folder;
+            },
+          },
+        );
+      }
+      break;
+    }
+
+    case 'proxy_web_search': {
+      if (!isMain && data.requestId && data.query) {
+        const { handleProxyWebSearch } = await import('./network-proxy.js');
+        await handleProxyWebSearch(
+          { requestId: data.requestId, query: data.query },
+          sourceGroup,
+          {
+            sendMessageWithId: deps.sendMessageWithId!,
+            getMainChatJid: deps.getMainChatJid!,
+            getGroupName: (folder) => {
+              const groups = deps.registeredGroups();
+              const entry = Object.values(groups).find(g => g.folder === folder);
+              return entry?.name || folder;
+            },
+          },
+        );
+      }
+      break;
+    }
 
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');
