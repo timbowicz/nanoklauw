@@ -31,6 +31,7 @@ export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
   bitwarden?: boolean; // Enable Bitwarden vault access for this group
+  networkMode?: 'full' | 'none'; // Default: 'none' for non-main, 'full' for main
 }
 
 export interface RegisteredGroup {
