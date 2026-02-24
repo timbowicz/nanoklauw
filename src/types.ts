@@ -65,6 +65,7 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  quotedMessageId?: string; // ID of the message being replied to
   image_data?: ImageBlock; // transient, never persisted to DB
   document_data?: DocumentBlock; // transient, never persisted to DB
 }
@@ -114,6 +115,8 @@ export interface Channel {
   sendDocument?(jid: string, document: Buffer, filename: string, caption?: string): Promise<void>;
   // Optional: metadata sync (used by refresh_groups IPC task).
   syncGroupMetadata?(force?: boolean): Promise<void>;
+  // Optional: send message and return its ID for reply correlation.
+  sendMessageWithId?(jid: string, text: string): Promise<string | undefined>;
 }
 
 // Callback type that channels use to deliver inbound messages

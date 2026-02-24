@@ -230,6 +230,10 @@ export class WhatsAppChannel implements Channel {
             ? fromMe
             : content.startsWith(`${ASSISTANT_NAME}:`);
 
+          // Extract quoted message ID for reply correlation (network proxy approvals)
+          const quotedMessageId =
+            msg.message?.extendedTextMessage?.contextInfo?.stanzaId || undefined;
+
           // Download media if present (non-blocking — failure just skips the media)
           const imageData = hasImage
             ? await downloadImage(msg, this.sock)
@@ -247,6 +251,7 @@ export class WhatsAppChannel implements Channel {
             timestamp,
             is_from_me: fromMe,
             is_bot_message: isBotMessage,
+            ...(quotedMessageId ? { quotedMessageId } : {}),
             ...(imageData ? { image_data: imageData } : {}),
             ...(documentData ? { document_data: documentData } : {}),
           });
@@ -285,6 +290,20 @@ export class WhatsAppChannel implements Channel {
       // If send fails, queue it for retry on reconnect
       this.outgoingQueue.push({ jid, text: prefixed, mentions });
       logger.warn({ jid, err, queueSize: this.outgoingQueue.length }, 'Failed to send, message queued');
+    }
+  }
+
+  async sendMessageWithId(jid: string, text: string): Promise<string | undefined> {
+    const prefixed = ASSISTANT_HAS_OWN_NUMBER
+      ? text
+      : `${ASSISTANT_NAME}: ${text}`;
+    if (!this.connected) return undefined;
+    try {
+      const sent = await this.sock.sendMessage(jid, { text: prefixed });
+      return sent?.key?.id ?? undefined;
+    } catch (err) {
+      logger.warn({ jid, err }, 'Failed to send message with ID');
+      return undefined;
     }
   }
 
