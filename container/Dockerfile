@@ -58,7 +58,7 @@ RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/
 # Create entrypoint script
 # Secrets are passed via stdin JSON — temp file is deleted immediately after Node reads it
 # Follow-up messages arrive via IPC files in /workspace/ipc/input/
-RUN printf '#!/bin/bash\nset -e\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\nln -s /app/node_modules /tmp/dist/node_modules\nchmod -R a-w /tmp/dist\n\n# Bitwarden: login and unlock if credentials are present\nif [ -n "$BW_CLIENTID" ]; then\n  bw login --apikey 2>/dev/null || true\n  export BW_SESSION=$(bw unlock --passwordenv BW_PASSWORD --raw)\n  bw sync 2>/dev/null\nfi\n\ncat > /tmp/input.json\nnode /tmp/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+RUN printf '#!/bin/bash\nset -e\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\nln -s /app/node_modules /tmp/dist/node_modules\nchmod -R a-w /tmp/dist\n\n# Bitwarden: login and unlock if credentials are present (non-fatal)\nif [ -n "$BW_CLIENTID" ]; then\n  bw config server ${BW_SERVER:-https://vault.bitwarden.eu} 2>/dev/null\n  if bw login --apikey 2>/dev/null; then\n    BW_SESSION=$(bw unlock --passwordenv BW_PASSWORD --raw 2>/dev/null) && export BW_SESSION && bw sync 2>/dev/null || echo "Warning: Bitwarden unlock failed" >&2\n  else\n    echo "Warning: Bitwarden login failed" >&2\n  fi\nfi\n\ncat > /tmp/input.json\nnode /tmp/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Install Tribe CRM MCP server (cloned on host, copied into image)
 COPY tribe-mcp/ /opt/tribe-mcp/
