@@ -143,8 +143,33 @@ function migrateSlackJidPrefix(database: Database.Database): void {
 
   logger.info('Migrating raw Slack JIDs to slack: prefix format...');
 
+  database.exec('PRAGMA foreign_keys = OFF');
   database.exec('BEGIN TRANSACTION');
   try {
+    // Remove auto-created duplicates that collide with old JIDs being migrated.
+    // The old entries have real message history; the new slack:-prefixed ones are empty.
+    database.prepare(`
+      DELETE FROM messages WHERE chat_jid IN (
+        SELECT 'slack:' || jid FROM chats
+        WHERE jid GLOB ? AND jid NOT LIKE 'slack:%'
+      ) AND chat_jid LIKE 'slack:%'
+    `).run('[CDG][A-Z0-9]*');
+
+    database.prepare(`
+      DELETE FROM registered_groups WHERE jid IN (
+        SELECT 'slack:' || jid FROM registered_groups
+        WHERE jid GLOB ? AND jid NOT LIKE 'slack:%'
+      ) AND jid LIKE 'slack:%'
+    `).run('[CDG][A-Z0-9]*');
+
+    database.prepare(`
+      DELETE FROM chats WHERE jid IN (
+        SELECT 'slack:' || jid FROM chats
+        WHERE jid GLOB ? AND jid NOT LIKE 'slack:%'
+      ) AND jid LIKE 'slack:%'
+    `).run('[CDG][A-Z0-9]*');
+
+    // Now rename old JIDs to slack: prefix
     // chats table
     database.prepare(`
       UPDATE chats SET jid = 'slack:' || jid
@@ -197,9 +222,11 @@ function migrateSlackJidPrefix(database: Database.Database): void {
     `).run('[CDG][A-Z0-9]*');
 
     database.exec('COMMIT');
+    database.exec('PRAGMA foreign_keys = ON');
     logger.info('Slack JID migration complete');
   } catch (err) {
     database.exec('ROLLBACK');
+    database.exec('PRAGMA foreign_keys = ON');
     logger.error({ err }, 'Slack JID migration failed, rolled back');
   }
 }
