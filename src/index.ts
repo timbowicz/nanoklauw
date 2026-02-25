@@ -41,6 +41,7 @@ import { applyImageDescriptions, DocumentRef, ImageRef } from './media-processin
 import { formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { handleApprovalResponse, getPendingApprovalIds } from './network-proxy.js';
+import { ensureRestrictedNetwork, stopRestrictedNetwork } from './restricted-network.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
@@ -488,11 +489,13 @@ async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
+  await ensureRestrictedNetwork();
   loadState();
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    stopRestrictedNetwork();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);

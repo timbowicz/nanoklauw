@@ -14,6 +14,7 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
+  RESTRICTED_NETWORK_NAME,
   TIMEZONE,
 } from './config.js';
 import { readEnvFile } from './env.js';
@@ -248,7 +249,7 @@ function buildContainerArgs(
   containerName: string,
   bitwarden: boolean,
   isMain: boolean,
-  networkMode?: 'full' | 'none',
+  networkMode?: 'full' | 'restricted' | 'none',
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName,
     '--memory', '2g',
@@ -282,12 +283,15 @@ function buildContainerArgs(
     if (secrets.BW_PASSWORD) args.push('-e', `BW_PASSWORD=${secrets.BW_PASSWORD}`);
   }
 
-  // Network isolation: non-main containers default to --network none
+  // Network isolation: non-main containers default to restricted network
   // Main containers keep full network (WebFetch/WebSearch need it)
-  const effectiveNetworkMode = networkMode ?? (isMain ? 'full' : 'none');
+  const effectiveNetworkMode = networkMode ?? (isMain ? 'full' : 'restricted');
   if (effectiveNetworkMode === 'none') {
     args.push('--network', 'none');
     args.push('-e', 'NETWORK_PROXY=true');
+  } else if (effectiveNetworkMode === 'restricted') {
+    args.push('--network', RESTRICTED_NETWORK_NAME);
+    args.push('-e', 'NETWORK_RESTRICTED=true');
   }
 
   for (const mount of mounts) {

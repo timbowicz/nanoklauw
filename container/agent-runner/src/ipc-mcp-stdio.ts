@@ -562,10 +562,74 @@ server.tool(
   },
 );
 
-// --- Network proxy tools (only for containers with --network none) ---
+// --- Network access request tool (only for containers with restricted network) ---
 
 const INPUT_DIR = path.join(IPC_DIR, 'input');
-const isNetworkProxied = process.env.NETWORK_PROXY === 'true';
+const isNetworkRestricted = process.env.NETWORK_RESTRICTED === 'true';
+
+if (isNetworkRestricted) {
+  server.tool(
+    'request_network_access',
+    `Request network access to a domain that is currently blocked by the restricted network firewall.
+Use this when you get a connection error (ETIMEDOUT, ECONNREFUSED, etc.) trying to reach a domain.
+The request is sent to the main channel for user approval. If approved, the domain is permanently
+allowlisted and iptables rules are updated immediately — you can retry your original operation right after.`,
+    {
+      domain: z.string().describe('The domain to request access to (e.g., "api.example.com")'),
+    },
+    async (args) => {
+      const requestId = `netaccess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      writeIpcFile(TASKS_DIR, {
+        type: 'request_network_access',
+        requestId,
+        domain: args.domain,
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Poll for response
+      const responseFile = path.join(INPUT_DIR, `proxy-response-${requestId}.json`);
+      const timeout = 6 * 60 * 1000; // 6 minutes (exceeds 5 min approval window)
+      const pollInterval = 1000;
+      const start = Date.now();
+
+      while (Date.now() - start < timeout) {
+        if (fs.existsSync(responseFile)) {
+          try {
+            const response = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+            fs.unlinkSync(responseFile);
+
+            if (response.status === 'approved') {
+              return {
+                content: [{ type: 'text' as const, text: `Network access to ${args.domain} approved. You can now retry your request.` }],
+              };
+            } else if (response.error) {
+              return { content: [{ type: 'text' as const, text: response.error }], isError: true };
+            } else {
+              return { content: [{ type: 'text' as const, text: `Network access to ${args.domain} was denied.` }], isError: true };
+            }
+          } catch (err) {
+            return {
+              content: [{ type: 'text' as const, text: `Failed to read response: ${err}` }],
+              isError: true,
+            };
+          }
+        }
+        await new Promise((r) => setTimeout(r, pollInterval));
+      }
+
+      return {
+        content: [{ type: 'text' as const, text: 'Network access request timed out waiting for approval.' }],
+        isError: true,
+      };
+    },
+  );
+}
+
+// --- Network proxy tools (for containers without full network access) ---
+
+const isNetworkProxied = process.env.NETWORK_PROXY === 'true' || process.env.NETWORK_RESTRICTED === 'true';
 
 if (isNetworkProxied) {
   server.tool(

@@ -436,6 +436,7 @@ export async function processTaskIpc(
     requestId?: string;
     url?: string;
     query?: string;
+    domain?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -672,6 +673,26 @@ export async function processTaskIpc(
         const { handleProxyWebSearch } = await import('./network-proxy.js');
         await handleProxyWebSearch(
           { requestId: data.requestId, query: data.query },
+          sourceGroup,
+          {
+            sendMessageWithId: deps.sendMessageWithId!,
+            getMainChatJid: deps.getMainChatJid!,
+            getGroupName: (folder) => {
+              const groups = deps.registeredGroups();
+              const entry = Object.values(groups).find(g => g.folder === folder);
+              return entry?.name || folder;
+            },
+          },
+        );
+      }
+      break;
+    }
+
+    case 'request_network_access': {
+      if (!isMain && data.requestId && data.domain) {
+        const { handleNetworkAccessRequest } = await import('./network-proxy.js');
+        await handleNetworkAccessRequest(
+          { requestId: data.requestId, domain: data.domain },
           sourceGroup,
           {
             sendMessageWithId: deps.sendMessageWithId!,

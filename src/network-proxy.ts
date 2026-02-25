@@ -8,6 +8,7 @@ import path from 'path';
 import https from 'https';
 import http from 'http';
 
+import { RESTRICTED_ALLOWED_DOMAINS } from './config.js';
 import { addToAllowlist, isAllowlisted } from './db.js';
 import { resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
@@ -208,6 +209,74 @@ export async function handleProxyWebFetch(
     }
   } else {
     logger.info({ requestId, domain, sourceGroup }, 'Network proxy denied');
+    writeProxyResponse(
+      sourceGroup,
+      requestId,
+      'denied',
+      undefined,
+      `Network access to ${domain} was denied by the user.`,
+    );
+  }
+}
+
+/**
+ * Process a request_network_access IPC task (restricted network mode).
+ * If the domain is already allowlisted, approves immediately.
+ * Otherwise, sends approval request to main channel.
+ * On approval, adds to allowlist and refreshes iptables rules.
+ */
+export async function handleNetworkAccessRequest(
+  data: {
+    requestId: string;
+    domain: string;
+  },
+  sourceGroup: string,
+  deps: ProxyDeps,
+): Promise<void> {
+  const { requestId, domain } = data;
+  const groupName = deps.getGroupName(sourceGroup);
+
+  // Check allowlist first — auto-approve if already allowed (static config or DB)
+  if (isAllowlisted(domain) || RESTRICTED_ALLOWED_DOMAINS.includes(domain)) {
+    logger.info({ requestId, domain, sourceGroup }, 'Domain already allowlisted, auto-approving network access');
+    writeProxyResponse(sourceGroup, requestId, 'approved');
+    return;
+  }
+
+  // Send approval request to main channel
+  const mainJid = deps.getMainChatJid();
+  if (!mainJid) {
+    logger.error({ requestId }, 'No main channel JID found, denying network access request');
+    writeProxyResponse(sourceGroup, requestId, 'denied', undefined, 'No main channel configured.');
+    return;
+  }
+
+  const approvalText = `[${groupName}] agent requests network access to: ${domain}\n\nReply yes/no or react 👍/👎 (5 min timeout)`;
+  const sentId = await deps.sendMessageWithId(mainJid, approvalText);
+
+  if (!sentId) {
+    logger.error({ requestId }, 'Failed to send approval message, denying');
+    writeProxyResponse(sourceGroup, requestId, 'denied', undefined, 'Failed to send approval request.');
+    return;
+  }
+
+  const approved = await requestApproval(requestId, sourceGroup, groupName, domain, sentId);
+
+  if (approved) {
+    addToAllowlist(domain, sourceGroup);
+    logger.info({ requestId, domain, sourceGroup }, 'Network access approved, domain allowlisted');
+
+    // Refresh iptables rules so the domain is reachable immediately
+    try {
+      const { refreshAllowedIps } = await import('./restricted-network.js');
+      await refreshAllowedIps();
+    } catch (err) {
+      logger.warn({ err }, 'Failed to refresh iptables after domain approval (rules will update on next cycle)');
+    }
+
+    writeProxyResponse(sourceGroup, requestId, 'approved');
+  } else {
+    logger.info({ requestId, domain, sourceGroup }, 'Network access denied');
     writeProxyResponse(
       sourceGroup,
       requestId,

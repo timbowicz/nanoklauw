@@ -85,6 +85,19 @@ export const CONTAINER_SECRETS = [
   'BW_PASSWORD',
 ];
 
+// Restricted network mode: custom Docker bridge + iptables firewall
+export const RESTRICTED_NETWORK_NAME = 'nanoclaw-restricted';
+export const RESTRICTED_NETWORK_SUBNET = '172.20.0.0/16';
+export const RESTRICTED_ALLOWED_DOMAINS = [
+  'api.anthropic.com',
+  'api.tribecrm.nl',
+  'auth.tribecrm.nl',
+  'vault.bitwarden.eu',
+  'identity.bitwarden.eu',
+  'generativelanguage.googleapis.com',
+];
+export const RESTRICTED_DNS_REFRESH_MS = 5 * 60 * 1000; // 5 minutes
+
 // Slack configuration
 // SLACK_BOT_TOKEN, SLACK_APP_TOKEN, and SLACK_SIGNING_SECRET are read directly
 // by SlackChannel from .env via readEnvFile() to keep secrets off process.env.
