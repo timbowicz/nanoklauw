@@ -10,9 +10,6 @@ const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
   'GATEWAY_CHANNEL',
-  'SLACK_BOT_TOKEN',
-  'SLACK_APP_TOKEN',
-  'SLACK_SIGNING_SECRET',
 ]);
 
 export const ASSISTANT_NAME =
@@ -89,9 +86,5 @@ export const CONTAINER_SECRETS = [
 ];
 
 // Slack configuration
-export const SLACK_BOT_TOKEN =
-  process.env.SLACK_BOT_TOKEN || envConfig.SLACK_BOT_TOKEN || '';
-export const SLACK_APP_TOKEN =
-  process.env.SLACK_APP_TOKEN || envConfig.SLACK_APP_TOKEN || '';
-export const SLACK_SIGNING_SECRET =
-  process.env.SLACK_SIGNING_SECRET || envConfig.SLACK_SIGNING_SECRET || '';
+// SLACK_BOT_TOKEN, SLACK_APP_TOKEN, and SLACK_SIGNING_SECRET are read directly
+// by SlackChannel from .env via readEnvFile() to keep secrets off process.env.

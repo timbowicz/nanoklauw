@@ -8,7 +8,7 @@ import { readEnvFile } from './env.js';
 const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
-  'SLACK_ONLY',
+  'GATEWAY_CHANNEL',
 ]);
 
 export const ASSISTANT_NAME =
@@ -69,7 +69,7 @@ export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 // Slack configuration
-// SLACK_BOT_TOKEN and SLACK_APP_TOKEN are read directly by SlackChannel
-// from .env via readEnvFile() to keep secrets off process.env.
-export const SLACK_ONLY =
-  (process.env.SLACK_ONLY || envConfig.SLACK_ONLY) === 'true';
+// SLACK_BOT_TOKEN, SLACK_APP_TOKEN, and SLACK_SIGNING_SECRET are read directly
+// by SlackChannel from .env via readEnvFile() to keep secrets off process.env.
+export const GATEWAY_CHANNEL =
+  process.env.GATEWAY_CHANNEL || envConfig.GATEWAY_CHANNEL || 'whatsapp';

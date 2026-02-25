@@ -32,6 +32,7 @@ const appRef = vi.hoisted(() => ({ current: null as any }));
 vi.mock('@slack/bolt', () => ({
   App: class MockApp {
     eventHandlers = new Map<string, Handler>();
+    commandHandlers = new Map<string, Handler>();
     token: string;
     appToken: string;
 
@@ -41,17 +42,25 @@ vi.mock('@slack/bolt', () => ({
       },
       chat: {
         postMessage: vi.fn().mockResolvedValue(undefined),
+        postEphemeral: vi.fn().mockResolvedValue(undefined),
       },
       conversations: {
         list: vi.fn().mockResolvedValue({
           channels: [],
           response_metadata: {},
         }),
+        info: vi.fn().mockResolvedValue({
+          channel: { name: 'test-channel' },
+        }),
       },
       users: {
         info: vi.fn().mockResolvedValue({
           user: { real_name: 'Alice Smith', name: 'alice' },
         }),
+      },
+      reactions: {
+        add: vi.fn().mockResolvedValue(undefined),
+        remove: vi.fn().mockResolvedValue(undefined),
       },
     };
 
@@ -65,6 +74,10 @@ vi.mock('@slack/bolt', () => ({
       this.eventHandlers.set(name, handler);
     }
 
+    command(name: string, handler: Handler) {
+      this.commandHandlers.set(name, handler);
+    }
+
     async start() {}
     async stop() {}
   },
@@ -76,10 +89,11 @@ vi.mock('../env.js', () => ({
   readEnvFile: vi.fn().mockReturnValue({
     SLACK_BOT_TOKEN: 'xoxb-test-token',
     SLACK_APP_TOKEN: 'xapp-test-token',
+    SLACK_SIGNING_SECRET: 'test-signing-secret',
   }),
 }));
 
-import { SlackChannel, SlackChannelOpts } from './slack.js';
+import { SlackChannel, SlackChannelOpts, shouldIgnoreSlackMessageSubtype } from './slack.js';
 import { updateChatName } from '../db.js';
 import { readEnvFile } from '../env.js';
 
@@ -99,6 +113,8 @@ function createTestOpts(
         added_at: '2024-01-01T00:00:00.000Z',
       },
     })),
+    registerGroup: vi.fn(),
+    onAbort: vi.fn().mockResolvedValue(true),
     ...overrides,
   };
 }
@@ -112,6 +128,7 @@ function createMessageEvent(overrides: {
   threadTs?: string;
   subtype?: string;
   botId?: string;
+  files?: Array<{ name?: string; mimetype?: string }>;
 }) {
   return {
     channel: overrides.channel ?? 'C0123456789',
@@ -122,6 +139,7 @@ function createMessageEvent(overrides: {
     thread_ts: overrides.threadTs,
     subtype: overrides.subtype,
     bot_id: overrides.botId,
+    files: overrides.files,
   };
 }
 
@@ -145,6 +163,30 @@ describe('SlackChannel', () => {
     vi.restoreAllMocks();
   });
 
+  // --- shouldIgnoreSlackMessageSubtype ---
+
+  describe('shouldIgnoreSlackMessageSubtype', () => {
+    it('returns false for undefined subtype (regular message)', () => {
+      expect(shouldIgnoreSlackMessageSubtype(undefined)).toBe(false);
+    });
+
+    it('returns false for bot_message subtype', () => {
+      expect(shouldIgnoreSlackMessageSubtype('bot_message')).toBe(false);
+    });
+
+    it('returns false for file_share subtype', () => {
+      expect(shouldIgnoreSlackMessageSubtype('file_share')).toBe(false);
+    });
+
+    it('returns true for channel_join subtype', () => {
+      expect(shouldIgnoreSlackMessageSubtype('channel_join')).toBe(true);
+    });
+
+    it('returns true for channel_leave subtype', () => {
+      expect(shouldIgnoreSlackMessageSubtype('channel_leave')).toBe(true);
+    });
+  });
+
   // --- Connection lifecycle ---
 
   describe('connection lifecycle', () => {
@@ -162,6 +204,13 @@ describe('SlackChannel', () => {
       new SlackChannel(opts);
 
       expect(currentApp().eventHandlers.has('message')).toBe(true);
+    });
+
+    it('registers /abort command handler on construction', () => {
+      const opts = createTestOpts();
+      new SlackChannel(opts);
+
+      expect(currentApp().commandHandlers.has('/abort')).toBe(true);
     });
 
     it('gets bot user ID on connect', async () => {
@@ -222,24 +271,6 @@ describe('SlackChannel', () => {
       );
     });
 
-    it('only emits metadata for unregistered channels', async () => {
-      const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
-      await channel.connect();
-
-      const event = createMessageEvent({ channel: 'C9999999999' });
-      await triggerMessageEvent(event);
-
-      expect(opts.onChatMetadata).toHaveBeenCalledWith(
-        'slack:C9999999999',
-        expect.any(String),
-        undefined,
-        'slack',
-        true,
-      );
-      expect(opts.onMessage).not.toHaveBeenCalled();
-    });
-
     it('skips non-text subtypes (channel_join, etc.)', async () => {
       const opts = createTestOpts();
       const channel = new SlackChannel(opts);
@@ -267,12 +298,12 @@ describe('SlackChannel', () => {
       expect(opts.onChatMetadata).toHaveBeenCalled();
     });
 
-    it('skips messages with no text', async () => {
+    it('skips messages with no text and no files', async () => {
       const opts = createTestOpts();
       const channel = new SlackChannel(opts);
       await channel.connect();
 
-      const event = createMessageEvent({ text: undefined as any });
+      const event = createMessageEvent({ text: '' });
       await triggerMessageEvent(event);
 
       expect(opts.onMessage).not.toHaveBeenCalled();
@@ -417,27 +448,6 @@ describe('SlackChannel', () => {
       );
     });
 
-    it('flattens threaded replies into channel messages', async () => {
-      const opts = createTestOpts();
-      const channel = new SlackChannel(opts);
-      await channel.connect();
-
-      const event = createMessageEvent({
-        ts: '1704067201.000000',
-        threadTs: '1704067200.000000', // parent message ts — this is a reply
-        text: 'Thread reply',
-      });
-      await triggerMessageEvent(event);
-
-      // Threaded replies are delivered as regular channel messages
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'slack:C0123456789',
-        expect.objectContaining({
-          content: 'Thread reply',
-        }),
-      );
-    });
-
     it('delivers thread parent messages normally', async () => {
       const opts = createTestOpts();
       const channel = new SlackChannel(opts);
@@ -487,7 +497,7 @@ describe('SlackChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'slack:C0123456789',
         expect.objectContaining({
-          content: '@Jonesy Hey <@U_BOT_123> what do you think?',
+          content: '@Jonesy Hey  what do you think?',
         }),
       );
     });
@@ -503,11 +513,11 @@ describe('SlackChannel', () => {
       });
       await triggerMessageEvent(event);
 
-      // Content should be unchanged since it already matches TRIGGER_PATTERN
+      // Content should have mention stripped but trigger preserved
       expect(opts.onMessage).toHaveBeenCalledWith(
         'slack:C0123456789',
         expect.objectContaining({
-          content: '@Jonesy <@U_BOT_123> hello',
+          content: '@Jonesy  hello',
         }),
       );
     });
@@ -554,6 +564,268 @@ describe('SlackChannel', () => {
     });
   });
 
+  // --- Auto-registration ---
+
+  describe('auto-registration', () => {
+    it('auto-registers DM channels on first message', async () => {
+      const opts = createTestOpts({
+        registeredGroups: vi.fn(() => ({})), // no registered groups
+      });
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      const event = createMessageEvent({
+        channel: 'D0123456789',
+        channelType: 'im',
+        text: 'Hello bot',
+      });
+      await triggerMessageEvent(event);
+
+      expect(opts.registerGroup).toHaveBeenCalledWith(
+        'slack:D0123456789',
+        expect.objectContaining({
+          name: expect.any(String),
+          folder: expect.any(String),
+          trigger: '@Jonesy',
+          requiresTrigger: false, // DMs don't require trigger
+        }),
+      );
+    });
+
+    it('auto-registers channel on @mention', async () => {
+      const opts = createTestOpts({
+        registeredGroups: vi.fn(() => ({})), // no registered groups
+      });
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      const event = createMessageEvent({
+        text: 'Hey <@U_BOT_123> help me',
+        user: 'U_USER_456',
+      });
+      await triggerMessageEvent(event);
+
+      expect(opts.registerGroup).toHaveBeenCalledWith(
+        'slack:C0123456789',
+        expect.objectContaining({
+          name: expect.any(String),
+          folder: expect.any(String),
+          trigger: '@Jonesy',
+          requiresTrigger: true, // channels require trigger
+        }),
+      );
+    });
+
+    it('ignores unregistered channels without @mention', async () => {
+      const opts = createTestOpts({
+        registeredGroups: vi.fn(() => ({})), // no registered groups
+      });
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      const event = createMessageEvent({
+        text: 'Just chatting',
+        user: 'U_USER_456',
+      });
+      await triggerMessageEvent(event);
+
+      expect(opts.registerGroup).not.toHaveBeenCalled();
+      expect(opts.onMessage).not.toHaveBeenCalled();
+    });
+
+    it('does not re-register already registered channels', async () => {
+      const opts = createTestOpts(); // has 'slack:C0123456789' registered
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      const event = createMessageEvent({
+        text: 'Hey <@U_BOT_123> help',
+      });
+      await triggerMessageEvent(event);
+
+      expect(opts.registerGroup).not.toHaveBeenCalled();
+    });
+  });
+
+  // --- /abort ---
+
+  describe('/abort', () => {
+    it('handles /abort slash command', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      const handler = currentApp().commandHandlers.get('/abort');
+      expect(handler).toBeDefined();
+
+      const ack = vi.fn();
+      await handler({ ack, command: { channel_id: 'C0123456789' } });
+
+      expect(opts.onAbort).toHaveBeenCalledWith('slack:C0123456789');
+      expect(ack).toHaveBeenCalledWith('Abort requested.');
+    });
+
+    it('handles text "abort" command', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      const event = createMessageEvent({ text: 'abort' });
+      await triggerMessageEvent(event);
+
+      expect(opts.onAbort).toHaveBeenCalledWith('slack:C0123456789');
+      // Should NOT pass message to onMessage
+      expect(opts.onMessage).not.toHaveBeenCalled();
+    });
+
+    it('handles "@bot abort" text command', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      const event = createMessageEvent({ text: '<@U_BOT_123> abort' });
+      await triggerMessageEvent(event);
+
+      expect(opts.onAbort).toHaveBeenCalledWith('slack:C0123456789');
+      expect(opts.onMessage).not.toHaveBeenCalled();
+    });
+
+    it('sends ephemeral message for text abort', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      const event = createMessageEvent({ text: 'abort', user: 'U_USER_456' });
+      await triggerMessageEvent(event);
+
+      expect(currentApp().client.chat.postEphemeral).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: 'C0123456789',
+          user: 'U_USER_456',
+          text: 'Abort requested.',
+        }),
+      );
+    });
+  });
+
+  // --- File attachment placeholders ---
+
+  describe('file attachment placeholders', () => {
+    it('appends image placeholder for image files', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      const event = createMessageEvent({
+        text: 'Check this out',
+        files: [{ name: 'photo.jpg', mimetype: 'image/jpeg' }],
+      });
+      await triggerMessageEvent(event);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'slack:C0123456789',
+        expect.objectContaining({
+          content: expect.stringContaining('[Image: photo.jpg]'),
+        }),
+      );
+    });
+
+    it('appends file placeholder for non-image files', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      const event = createMessageEvent({
+        text: 'Here is a doc',
+        files: [{ name: 'report.pdf', mimetype: 'application/pdf' }],
+      });
+      await triggerMessageEvent(event);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'slack:C0123456789',
+        expect.objectContaining({
+          content: expect.stringContaining('[File: report.pdf]'),
+        }),
+      );
+    });
+
+    it('handles multiple file attachments', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      const event = createMessageEvent({
+        text: 'Files',
+        files: [
+          { name: 'photo.png', mimetype: 'image/png' },
+          { name: 'data.csv', mimetype: 'text/csv' },
+        ],
+      });
+      await triggerMessageEvent(event);
+
+      const call = vi.mocked(opts.onMessage).mock.calls[0];
+      const content = call[1].content;
+      expect(content).toContain('[Image: photo.png]');
+      expect(content).toContain('[File: data.csv]');
+    });
+  });
+
+  // --- Thread tracking ---
+
+  describe('thread tracking', () => {
+    it('auto-triggers replies in bot-active threads', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      // First: mention bot in a message (creates active thread)
+      await triggerMessageEvent(createMessageEvent({
+        text: '<@U_BOT_123> help me',
+        ts: '1704067200.000000',
+        user: 'U_USER_456',
+      }));
+
+      vi.mocked(opts.onMessage).mockClear();
+
+      // Second: reply in same thread without mention
+      await triggerMessageEvent(createMessageEvent({
+        text: 'more context here',
+        ts: '1704067201.000000',
+        threadTs: '1704067200.000000',
+        user: 'U_USER_456',
+      }));
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'slack:C0123456789',
+        expect.objectContaining({
+          content: '@Jonesy more context here',
+        }),
+      );
+    });
+
+    it('does not auto-trigger in non-active threads', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      // Reply in a thread that was never activated by bot mention
+      await triggerMessageEvent(createMessageEvent({
+        text: 'random reply',
+        ts: '1704067201.000000',
+        threadTs: '1704067100.000000',
+        user: 'U_USER_456',
+      }));
+
+      // Should be delivered without trigger prepended
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'slack:C0123456789',
+        expect.objectContaining({
+          content: 'random reply',
+        }),
+      );
+    });
+  });
+
   // --- sendMessage ---
 
   describe('sendMessage', () => {
@@ -564,10 +836,12 @@ describe('SlackChannel', () => {
 
       await channel.sendMessage('slack:C0123456789', 'Hello');
 
-      expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith({
-        channel: 'C0123456789',
-        text: 'Hello',
-      });
+      expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: 'C0123456789',
+          text: 'Hello',
+        }),
+      );
     });
 
     it('strips slack: prefix from JID', async () => {
@@ -577,10 +851,12 @@ describe('SlackChannel', () => {
 
       await channel.sendMessage('slack:D9876543210', 'DM message');
 
-      expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith({
-        channel: 'D9876543210',
-        text: 'DM message',
-      });
+      expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: 'D9876543210',
+          text: 'DM message',
+        }),
+      );
     });
 
     it('queues message when disconnected', async () => {
@@ -619,14 +895,18 @@ describe('SlackChannel', () => {
 
       // Should be split into 2 messages: 4000 + 500
       expect(currentApp().client.chat.postMessage).toHaveBeenCalledTimes(2);
-      expect(currentApp().client.chat.postMessage).toHaveBeenNthCalledWith(1, {
-        channel: 'C0123456789',
-        text: 'A'.repeat(4000),
-      });
-      expect(currentApp().client.chat.postMessage).toHaveBeenNthCalledWith(2, {
-        channel: 'C0123456789',
-        text: 'A'.repeat(500),
-      });
+      expect(currentApp().client.chat.postMessage).toHaveBeenNthCalledWith(1,
+        expect.objectContaining({
+          channel: 'C0123456789',
+          text: 'A'.repeat(4000),
+        }),
+      );
+      expect(currentApp().client.chat.postMessage).toHaveBeenNthCalledWith(2,
+        expect.objectContaining({
+          channel: 'C0123456789',
+          text: 'A'.repeat(500),
+        }),
+      );
     });
 
     it('sends exactly-4000-char messages as a single message', async () => {
@@ -638,10 +918,6 @@ describe('SlackChannel', () => {
       await channel.sendMessage('slack:C0123456789', text);
 
       expect(currentApp().client.chat.postMessage).toHaveBeenCalledTimes(1);
-      expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith({
-        channel: 'C0123456789',
-        text,
-      });
     });
 
     it('splits messages into 3 parts when over 8000 chars', async () => {
@@ -669,14 +945,36 @@ describe('SlackChannel', () => {
       // Connect triggers flush
       await channel.connect();
 
-      expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith({
-        channel: 'C0123456789',
-        text: 'First queued',
-      });
-      expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith({
-        channel: 'C0123456789',
-        text: 'Second queued',
-      });
+      expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: 'C0123456789',
+          text: 'First queued',
+        }),
+      );
+      expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: 'C0123456789',
+          text: 'Second queued',
+        }),
+      );
+    });
+
+    it('tracks bot own message after sending', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      await channel.sendMessage('slack:C0123456789', 'Bot reply');
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'slack:C0123456789',
+        expect.objectContaining({
+          is_from_me: true,
+          is_bot_message: true,
+          sender_name: 'Jonesy',
+          content: 'Bot reply',
+        }),
+      );
     });
   });
 
@@ -752,26 +1050,74 @@ describe('SlackChannel', () => {
     });
   });
 
-  // --- setTyping ---
+  // --- setTyping (hourglass) ---
 
   describe('setTyping', () => {
-    it('resolves without error (no-op)', async () => {
+    it('adds hourglass reaction when typing starts', async () => {
       const opts = createTestOpts();
       const channel = new SlackChannel(opts);
+      await channel.connect();
 
-      // Should not throw — Slack has no bot typing indicator API
-      await expect(
-        channel.setTyping('slack:C0123456789', true),
-      ).resolves.toBeUndefined();
+      // Trigger a mention to set lastTriggerTs
+      await triggerMessageEvent(createMessageEvent({
+        text: '<@U_BOT_123> help',
+        ts: '1704067200.000000',
+      }));
+
+      await channel.setTyping('slack:C0123456789', true);
+
+      expect(currentApp().client.reactions.add).toHaveBeenCalledWith({
+        channel: 'C0123456789',
+        timestamp: '1704067200.000000',
+        name: 'hourglass_flowing_sand',
+      });
     });
 
-    it('accepts false without error', async () => {
+    it('removes hourglass reaction when typing stops', async () => {
       const opts = createTestOpts();
       const channel = new SlackChannel(opts);
+      await channel.connect();
 
-      await expect(
-        channel.setTyping('slack:C0123456789', false),
-      ).resolves.toBeUndefined();
+      // Trigger a mention to set lastTriggerTs
+      await triggerMessageEvent(createMessageEvent({
+        text: '<@U_BOT_123> help',
+        ts: '1704067200.000000',
+      }));
+
+      await channel.setTyping('slack:C0123456789', false);
+
+      expect(currentApp().client.reactions.remove).toHaveBeenCalledWith({
+        channel: 'C0123456789',
+        timestamp: '1704067200.000000',
+        name: 'hourglass_flowing_sand',
+      });
+    });
+
+    it('does nothing when no trigger ts exists', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      // No mention, so no lastTriggerTs
+      await channel.setTyping('slack:C0123456789', true);
+
+      expect(currentApp().client.reactions.add).not.toHaveBeenCalled();
+    });
+
+    it('handles reaction errors gracefully', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      await triggerMessageEvent(createMessageEvent({
+        text: '<@U_BOT_123> help',
+        ts: '1704067200.000000',
+      }));
+
+      currentApp().client.reactions.add.mockRejectedValueOnce(new Error('already_reacted'));
+
+      // Should not throw
+      await expect(channel.setTyping('slack:C0123456789', true)).resolves.toBeUndefined();
     });
   });
 
@@ -782,6 +1128,7 @@ describe('SlackChannel', () => {
       vi.mocked(readEnvFile).mockReturnValueOnce({
         SLACK_BOT_TOKEN: '',
         SLACK_APP_TOKEN: 'xapp-test-token',
+        SLACK_SIGNING_SECRET: 'secret',
       });
 
       expect(() => new SlackChannel(createTestOpts())).toThrow(
@@ -793,6 +1140,7 @@ describe('SlackChannel', () => {
       vi.mocked(readEnvFile).mockReturnValueOnce({
         SLACK_BOT_TOKEN: 'xoxb-test-token',
         SLACK_APP_TOKEN: '',
+        SLACK_SIGNING_SECRET: 'secret',
       });
 
       expect(() => new SlackChannel(createTestOpts())).toThrow(

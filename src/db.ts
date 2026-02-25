@@ -123,6 +123,85 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* columns already exist */
   }
+
+  // Migrate raw Slack JIDs to slack: prefix format (idempotent).
+  // Matches Slack channel/DM/group IDs: C, D, or G followed by uppercase alphanumeric,
+  // but NOT already prefixed with 'slack:' and NOT WhatsApp JIDs (@g.us, @s.whatsapp.net).
+  migrateSlackJidPrefix(database);
+}
+
+/**
+ * Prefix raw Slack JIDs with 'slack:' across all tables.
+ * Idempotent: only touches JIDs matching [CDG][A-Z0-9]+ that don't already have the prefix.
+ */
+function migrateSlackJidPrefix(database: Database.Database): void {
+  // Check if any raw Slack JIDs exist in registered_groups (quick probe)
+  const probe = database.prepare(
+    `SELECT 1 FROM registered_groups WHERE jid GLOB ? AND jid NOT LIKE 'slack:%' LIMIT 1`,
+  ).get('[CDG][A-Z0-9]*');
+  if (!probe) return; // No migration needed
+
+  logger.info('Migrating raw Slack JIDs to slack: prefix format...');
+
+  database.exec('BEGIN TRANSACTION');
+  try {
+    // chats table
+    database.prepare(`
+      UPDATE chats SET jid = 'slack:' || jid
+      WHERE jid GLOB ? AND jid NOT LIKE 'slack:%'
+    `).run('[CDG][A-Z0-9]*');
+
+    // registered_groups table
+    database.prepare(`
+      UPDATE registered_groups SET jid = 'slack:' || jid
+      WHERE jid GLOB ? AND jid NOT LIKE 'slack:%'
+    `).run('[CDG][A-Z0-9]*');
+
+    // messages table (chat_jid column)
+    database.prepare(`
+      UPDATE messages SET chat_jid = 'slack:' || chat_jid
+      WHERE chat_jid GLOB ? AND chat_jid NOT LIKE 'slack:%'
+    `).run('[CDG][A-Z0-9]*');
+
+    // router_state: last_agent_timestamp is a JSON object with JIDs as keys
+    const row = database.prepare(
+      `SELECT value FROM router_state WHERE key = 'last_agent_timestamp'`,
+    ).get() as { value: string } | undefined;
+    if (row?.value) {
+      try {
+        const timestamps = JSON.parse(row.value) as Record<string, string>;
+        let changed = false;
+        const updated: Record<string, string> = {};
+        for (const [jid, ts] of Object.entries(timestamps)) {
+          if (/^[CDG][A-Z0-9]+$/.test(jid)) {
+            updated[`slack:${jid}`] = ts;
+            changed = true;
+          } else {
+            updated[jid] = ts;
+          }
+        }
+        if (changed) {
+          database.prepare(
+            `UPDATE router_state SET value = ? WHERE key = 'last_agent_timestamp'`,
+          ).run(JSON.stringify(updated));
+        }
+      } catch {
+        // Corrupt JSON — skip
+      }
+    }
+
+    // scheduled_tasks table (chat_jid column)
+    database.prepare(`
+      UPDATE scheduled_tasks SET chat_jid = 'slack:' || chat_jid
+      WHERE chat_jid GLOB ? AND chat_jid NOT LIKE 'slack:%'
+    `).run('[CDG][A-Z0-9]*');
+
+    database.exec('COMMIT');
+    logger.info('Slack JID migration complete');
+  } catch (err) {
+    database.exec('ROLLBACK');
+    logger.error({ err }, 'Slack JID migration failed, rolled back');
+  }
 }
 
 export function initDatabase(): void {

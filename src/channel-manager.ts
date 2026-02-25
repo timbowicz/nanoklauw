@@ -2,12 +2,7 @@
  * Channel initialization and lookup.
  * Extracts multi-channel wiring from index.ts to reduce merge surface.
  */
-import {
-  GATEWAY_CHANNEL,
-  SLACK_APP_TOKEN,
-  SLACK_BOT_TOKEN,
-  SLACK_SIGNING_SECRET,
-} from './config.js';
+import { GATEWAY_CHANNEL } from './config.js';
 import { SlackChannel } from './channels/slack.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
 import { logger } from './logger.js';
@@ -54,12 +49,7 @@ export async function initializeChannels(
   }
 
   if (enableSlack) {
-    const slack = new SlackChannel({
-      ...opts,
-      botToken: SLACK_BOT_TOKEN,
-      appToken: SLACK_APP_TOKEN,
-      signingSecret: SLACK_SIGNING_SECRET,
-    });
+    const slack = new SlackChannel(opts);
     channels.push(slack);
     await slack.connect();
   }

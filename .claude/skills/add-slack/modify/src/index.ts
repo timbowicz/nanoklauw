@@ -1,17 +1,15 @@
 import fs from 'fs';
 import path from 'path';
 
+import { findChannel, initializeChannels } from './channel-manager.js';
 import {
   ASSISTANT_NAME,
   DATA_DIR,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
-  SLACK_ONLY,
   TRIGGER_PATTERN,
 } from './config.js';
-import { WhatsAppChannel } from './channels/whatsapp.js';
-import { SlackChannel } from './channels/slack.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -36,11 +34,10 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { startIpcWatcher } from './ipc.js';
-import { findChannel, formatMessages, formatOutbound } from './router.js';
+import { formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
-import { readEnvFile } from './env.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -51,9 +48,7 @@ let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
 
-let whatsapp: WhatsAppChannel;
-let slack: SlackChannel | undefined;
-const channels: Channel[] = [];
+let channels: Channel[] = [];
 const queue = new GroupQueue();
 
 function loadState(): void {
@@ -423,30 +418,15 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  // Channel callbacks (shared by all channels)
-  const channelOpts = {
+  // Create and connect channels via channel-manager (handles GATEWAY_CHANNEL mode)
+  channels = await initializeChannels({
     onMessage: (_chatJid: string, msg: NewMessage) => storeMessage(msg),
     onChatMetadata: (chatJid: string, timestamp: string, name?: string, channel?: string, isGroup?: boolean) =>
       storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
-  };
-
-  // Create and connect channels
-  // Check if Slack tokens are configured
-  const slackEnv = readEnvFile(['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN']);
-  const hasSlackTokens = !!(slackEnv.SLACK_BOT_TOKEN && slackEnv.SLACK_APP_TOKEN);
-
-  if (!SLACK_ONLY) {
-    whatsapp = new WhatsAppChannel(channelOpts);
-    channels.push(whatsapp);
-    await whatsapp.connect();
-  }
-
-  if (hasSlackTokens) {
-    slack = new SlackChannel(channelOpts);
-    channels.push(slack);
-    await slack.connect();
-  }
+    registerGroup,
+    onAbort: async (chatJid: string) => queue.cancelGroup(chatJid),
+  });
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
@@ -474,8 +454,9 @@ async function main(): Promise<void> {
     registerGroup,
     syncGroupMetadata: async (force) => {
       // Sync metadata across all active channels
-      if (whatsapp) await whatsapp.syncGroupMetadata(force);
-      if (slack) await slack.syncChannelMetadata();
+      for (const ch of channels) {
+        if (ch.syncGroupMetadata) await ch.syncGroupMetadata(force);
+      }
     },
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) => writeGroupsSnapshot(gf, im, ag, rj),

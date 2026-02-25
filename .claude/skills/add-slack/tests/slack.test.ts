@@ -133,7 +133,8 @@ describe('slack skill package', () => {
     expect(content).toContain('lastTriggerTs');
 
     // File attachment placeholders
-    expect(content).toContain('[Image:');
-    expect(content).toContain('[File:');
+    expect(content).toContain("'Image'");
+    expect(content).toContain("'File'");
+    expect(content).toContain('f.name');
   });
 });
