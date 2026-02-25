@@ -10,7 +10,10 @@ import { logger } from './logger.js';
 export const CONTAINER_RUNTIME_BIN = 'docker';
 
 /** Returns CLI args for a readonly bind mount. */
-export function readonlyMountArgs(hostPath: string, containerPath: string): string[] {
+export function readonlyMountArgs(
+  hostPath: string,
+  containerPath: string,
+): string[] {
   return ['-v', `${hostPath}:${containerPath}:ro`];
 }
 
@@ -69,7 +72,10 @@ export function cleanupOrphans(): void {
       } catch { /* already stopped */ }
     }
     if (orphans.length > 0) {
-      logger.info({ count: orphans.length, names: orphans }, 'Stopped orphaned containers');
+      logger.info(
+        { count: orphans.length, names: orphans },
+        'Stopped orphaned containers',
+      );
     }
   } catch (err) {
     logger.warn({ err }, 'Failed to clean up orphaned containers');

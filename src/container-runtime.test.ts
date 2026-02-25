@@ -60,7 +60,9 @@ describe('ensureContainerRuntimeRunning', () => {
       ['info'],
       { stdio: 'pipe', timeout: 10000 },
     );
-    expect(logger.debug).toHaveBeenCalledWith('Container runtime already running');
+    expect(logger.debug).toHaveBeenCalledWith(
+      'Container runtime already running',
+    );
   });
 
   it('throws when docker info fails', () => {
