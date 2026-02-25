@@ -312,6 +312,54 @@ function quarantineIpcFile(
   }
 }
 
+/**
+ * Remove stale IPC task and proxy-response files left by killed containers.
+ * Called once at startup before the IPC watcher begins polling.
+ */
+function cleanupStaleIpcTasks(ipcBaseDir: string): void {
+  try {
+    const groupFolders = fs.readdirSync(ipcBaseDir).filter((f) => {
+      try {
+        return fs.statSync(path.join(ipcBaseDir, f)).isDirectory() && f !== 'errors';
+      } catch { return false; }
+    });
+
+    let tasksCleaned = 0;
+    let responsesCleaned = 0;
+
+    for (const group of groupFolders) {
+      // Clean stale task files (proxy_web_search, request_network_access, etc.)
+      const tasksDir = path.join(ipcBaseDir, group, 'tasks');
+      if (fs.existsSync(tasksDir)) {
+        for (const file of fs.readdirSync(tasksDir)) {
+          if (file.endsWith('.json')) {
+            try { fs.unlinkSync(path.join(tasksDir, file)); tasksCleaned++; } catch {}
+          }
+        }
+      }
+
+      // Clean stale proxy responses that were never consumed
+      const inputDir = path.join(ipcBaseDir, group, 'input');
+      if (fs.existsSync(inputDir)) {
+        for (const file of fs.readdirSync(inputDir)) {
+          if (file.startsWith('proxy-response-') && file.endsWith('.json')) {
+            try { fs.unlinkSync(path.join(inputDir, file)); responsesCleaned++; } catch {}
+          }
+        }
+      }
+    }
+
+    if (tasksCleaned > 0 || responsesCleaned > 0) {
+      logger.info(
+        { tasksCleaned, responsesCleaned },
+        'Cleaned up stale IPC files from previous service instance',
+      );
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Failed to clean up stale IPC files');
+  }
+}
+
 export function startIpcWatcher(deps: IpcDeps): void {
   if (ipcWatcherRunning) {
     logger.debug('IPC watcher already running, skipping duplicate start');
@@ -321,6 +369,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
   const ipcBaseDir = path.join(DATA_DIR, 'ipc');
   fs.mkdirSync(ipcBaseDir, { recursive: true });
+
+  // Clean up stale IPC task files from previous service instances.
+  // Orphan tasks (from containers killed during restarts) cause duplicate
+  // approval requests that confuse users and waste the current container's
+  // polling timeout.
+  cleanupStaleIpcTasks(ipcBaseDir);
 
   const processIpcFiles = async () => {
     // Scan all group IPC directories (identity determined by directory)

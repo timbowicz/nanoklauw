@@ -309,13 +309,16 @@ export async function handleProxyWebSearch(
   }
 
   const approvalText = `[${groupName}] agent wants to search: "${query}"\n\nReply yes/no or react 👍/👎 (5 min timeout)`;
+  logger.info({ requestId, query, sourceGroup }, 'Sending search approval request to main channel');
   const sentId = await deps.sendMessageWithId(mainJid, approvalText);
 
   if (!sentId) {
+    logger.warn({ requestId }, 'Failed to send search approval message');
     writeProxyResponse(sourceGroup, requestId, 'denied', undefined, 'Failed to send approval request.');
     return;
   }
 
+  logger.info({ requestId, messageId: sentId }, 'Search approval message sent, waiting for response');
   const approved = await requestApproval(requestId, sourceGroup, groupName, query, sentId);
 
   if (approved) {

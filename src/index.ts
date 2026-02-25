@@ -535,6 +535,9 @@ async function main(): Promise<void> {
     registeredGroups: () => registeredGroups,
     registerGroup,
     onAbort: async (chatJid: string): Promise<boolean> => queue.abortGroup(chatJid),
+    onReaction: (originalMessageId: string, approved: boolean) => {
+      handleApprovalResponse(originalMessageId, approved);
+    },
   });
 
   // Start subsystems (independently of connection handler)

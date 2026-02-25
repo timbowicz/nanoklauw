@@ -20,6 +20,7 @@ export interface ChannelCallbacks {
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   onAbort: (chatJid: string) => Promise<boolean>;
+  onReaction?: (originalMessageId: string, approved: boolean) => void;
 }
 
 /**

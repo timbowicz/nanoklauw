@@ -18,7 +18,11 @@ import { getAllAllowlisted } from './db.js';
 import { logger } from './logger.js';
 
 const execFileAsync = promisify(execFile);
-const resolve4 = promisify(dns.resolve4);
+
+// Custom resolver with longer timeout and retries — the default Node DNS
+// resolver has a very short timeout that fails on hosts with slow resolvers.
+const resolver = new dns.Resolver({ timeout: 10000, tries: 4 });
+const resolve4 = promisify(resolver.resolve4.bind(resolver));
 
 const IPTABLES_CHAIN = 'NANOCLAW-RESTRICTED';
 
@@ -105,6 +109,9 @@ async function setupIptablesChain(): Promise<void> {
 /**
  * Resolve all allowed domains and rebuild iptables rules.
  * Called periodically and after dynamic domain approval.
+ *
+ * Uses a temporary chain to atomically swap rules, avoiding a window
+ * where all connections are blocked during the flush-rebuild cycle.
  */
 export async function refreshAllowedIps(): Promise<void> {
   // Merge static config domains with dynamically approved domains from DB
@@ -113,53 +120,111 @@ export async function refreshAllowedIps(): Promise<void> {
 
   // Resolve all domains to IPs
   const allIps = new Set<string>();
+  let resolveFailures = 0;
   await Promise.all(
     allDomains.map(async (domain) => {
       try {
         const ips = await resolve4(domain);
         for (const ip of ips) allIps.add(ip);
       } catch (err) {
+        resolveFailures++;
         logger.warn({ domain, err }, 'Failed to resolve domain for restricted network');
       }
     }),
   );
 
-  // Flush and rebuild the chain
-  try {
-    await execFileAsync('iptables', ['-F', IPTABLES_CHAIN]);
-  } catch {
-    // Chain may not exist yet
-    try {
-      await execFileAsync('iptables', ['-N', IPTABLES_CHAIN]);
-    } catch {
-      // Already exists
-    }
+  // If ALL domains failed to resolve, skip the update to preserve existing rules
+  if (allIps.size === 0 && allDomains.length > 0) {
+    logger.warn(
+      { domainCount: allDomains.length, failures: resolveFailures },
+      'All DNS resolutions failed, keeping existing iptables rules',
+    );
+    return;
   }
 
-  // Rule 1: Allow established/related connections (return to DOCKER-USER)
-  await iptablesAppend([
+  // Build rules in a temporary chain, then swap atomically
+  const tmpChain = `${IPTABLES_CHAIN}-TMP`;
+
+  // Create temp chain (delete first if leftover from a previous crash)
+  try { await execFileAsync('iptables', ['-F', tmpChain]); } catch {}
+  try { await execFileAsync('iptables', ['-X', tmpChain]); } catch {}
+  try {
+    await execFileAsync('iptables', ['-N', tmpChain]);
+  } catch {
+    // Shouldn't happen after delete above, but be safe
+  }
+
+  // Rule 1: Allow established/related connections
+  await iptablesAppendTo(tmpChain, [
     '-m', 'conntrack', '--ctstate', 'ESTABLISHED,RELATED',
     '-j', 'RETURN',
   ]);
 
   // Rule 2: Allow DNS (UDP 53) so containers can resolve hostnames
-  await iptablesAppend([
+  await iptablesAppendTo(tmpChain, [
     '-p', 'udp', '--dport', '53',
     '-j', 'RETURN',
   ]);
 
   // Rule 3: Allow each resolved IP on port 443
   for (const ip of allIps) {
-    await iptablesAppend([
+    await iptablesAppendTo(tmpChain, [
       '-d', ip, '-p', 'tcp', '--dport', '443',
       '-j', 'RETURN',
     ]);
   }
 
-  // Rule 4: Drop everything else from the restricted subnet
-  await iptablesAppend([
-    '-j', 'DROP',
+  // Rule 4: Drop everything else
+  await iptablesAppendTo(tmpChain, ['-j', 'DROP']);
+
+  // Atomic swap: update DOCKER-USER to jump to temp chain, flush old, swap back
+  // Step 1: Redirect DOCKER-USER jump from old chain to temp chain
+  try {
+    await execFileAsync('iptables', [
+      '-R', 'DOCKER-USER', '1',
+      '-s', RESTRICTED_NETWORK_SUBNET,
+      '-j', tmpChain,
+    ]);
+  } catch (err) {
+    // If replace fails (e.g. rule index changed), fall back to flush-swap
+    logger.warn({ err }, 'Atomic swap failed, falling back to flush');
+    try { await execFileAsync('iptables', ['-F', tmpChain]); } catch {}
+    try { await execFileAsync('iptables', ['-X', tmpChain]); } catch {}
+    return;
+  }
+
+  // Step 2: Flush old chain (now unreferenced by DOCKER-USER)
+  try { await execFileAsync('iptables', ['-F', IPTABLES_CHAIN]); } catch {}
+
+  // Step 3: Copy rules from temp to real chain
+  // (We can't rename iptables chains, so we rebuild the real chain)
+  await iptablesAppendTo(IPTABLES_CHAIN, [
+    '-m', 'conntrack', '--ctstate', 'ESTABLISHED,RELATED', '-j', 'RETURN',
   ]);
+  await iptablesAppendTo(IPTABLES_CHAIN, [
+    '-p', 'udp', '--dport', '53', '-j', 'RETURN',
+  ]);
+  for (const ip of allIps) {
+    await iptablesAppendTo(IPTABLES_CHAIN, [
+      '-d', ip, '-p', 'tcp', '--dport', '443', '-j', 'RETURN',
+    ]);
+  }
+  await iptablesAppendTo(IPTABLES_CHAIN, ['-j', 'DROP']);
+
+  // Step 4: Point DOCKER-USER back to the real chain
+  try {
+    await execFileAsync('iptables', [
+      '-R', 'DOCKER-USER', '1',
+      '-s', RESTRICTED_NETWORK_SUBNET,
+      '-j', IPTABLES_CHAIN,
+    ]);
+  } catch (err) {
+    logger.error({ err }, 'Failed to restore DOCKER-USER jump to main chain');
+  }
+
+  // Step 5: Clean up temp chain
+  try { await execFileAsync('iptables', ['-F', tmpChain]); } catch {}
+  try { await execFileAsync('iptables', ['-X', tmpChain]); } catch {}
 
   logger.info(
     { domainCount: allDomains.length, ipCount: allIps.size },
@@ -167,11 +232,11 @@ export async function refreshAllowedIps(): Promise<void> {
   );
 }
 
-async function iptablesAppend(ruleArgs: string[]): Promise<void> {
+async function iptablesAppendTo(chain: string, ruleArgs: string[]): Promise<void> {
   try {
-    await execFileAsync('iptables', ['-A', IPTABLES_CHAIN, ...ruleArgs]);
+    await execFileAsync('iptables', ['-A', chain, ...ruleArgs]);
   } catch (err) {
-    logger.error({ err, rule: ruleArgs.join(' ') }, 'Failed to append iptables rule');
+    logger.error({ err, chain, rule: ruleArgs.join(' ') }, 'Failed to append iptables rule');
   }
 }
 

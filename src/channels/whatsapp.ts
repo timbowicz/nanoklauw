@@ -27,6 +27,7 @@ export interface WhatsAppChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  onReaction?: (originalMessageId: string, approved: boolean) => void;
 }
 
 const BASE_RECONNECT_MS = 2_000;
@@ -175,6 +176,19 @@ export class WhatsAppChannel implements Channel {
         if (!msg.message) continue;
         const rawJid = msg.key.remoteJid;
         if (!rawJid || rawJid === 'status@broadcast') continue;
+
+        // Handle reactions: deliver as approval responses for pending proxy requests.
+        // Reactions have reactionMessage with .key (original message) and .text (emoji).
+        const reaction = msg.message?.reactionMessage;
+        if (reaction?.key?.id && reaction.text) {
+          const emoji = reaction.text;
+          const isApproval = ['👍', '✅', '👌'].includes(emoji);
+          const isDenial = ['👎', '❌', '🚫'].includes(emoji);
+          if (isApproval || isDenial) {
+            this.opts.onReaction?.(reaction.key.id, isApproval);
+          }
+          continue;
+        }
 
         // Translate LID JID to phone JID if applicable
         const chatJid = await this.translateJid(rawJid);

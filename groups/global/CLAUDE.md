@@ -38,6 +38,22 @@ When working as a sub-agent or teammate, only use `send_message` if instructed t
 
 Your system clock is set to Europe/Amsterdam (CET/CEST). When asked for the current time or date, always use `date` to get the correct local time — do NOT rely on any date injected in your system prompt, as that may be in UTC.
 
+## Network Access
+
+If you have the `request_network_access` tool available, you are on a restricted network. Only a few essential domains (like the Claude API) are reachable by default. All other outbound connections will time out silently.
+
+**Before browsing or fetching any URL with the browser**, call `request_network_access` with the domain first. This sends an approval request to the user. Once approved, the domain is permanently allowlisted and you can access it normally.
+
+Example workflow:
+1. You want to browse `buienradar.nl`
+2. Call `request_network_access` with domain `buienradar.nl`
+3. Wait for approval
+4. Then use `agent-browser` or any other tool to access the site
+
+If you get a connection timeout from the browser or any HTTP request, the domain is likely blocked. Use `request_network_access` to request access, then retry.
+
+The `web_search` and `web_fetch` tools already handle approval automatically — you don't need `request_network_access` for those.
+
 ## Your Workspace
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.
