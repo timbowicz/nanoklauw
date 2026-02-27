@@ -211,9 +211,22 @@ export class SlackChannel implements Channel {
         content = `@${ASSISTANT_NAME} ${content}`;
       }
 
-      // Track trigger timestamp for threading replies
-      if (mentioned && msg.ts) {
-        this.lastTriggerTs.set(jid, threadTs || msg.ts);
+      // Track trigger timestamp for threading replies.
+      // - @mention in main channel → thread under that message
+      // - any trigger in a thread → reply in that thread
+      // - trigger pattern (no @mention) in main channel → reply in channel
+      const willTrigger = mentioned
+        || (!isBotMessage && threadTs && this.botActiveThreads.has(threadTs))
+        || TRIGGER_PATTERN.test(content);
+
+      if (willTrigger && msg.ts) {
+        if (mentioned && !threadTs) {
+          this.lastTriggerTs.set(jid, msg.ts);
+        } else if (threadTs) {
+          this.lastTriggerTs.set(jid, threadTs);
+        } else {
+          this.lastTriggerTs.delete(jid);
+        }
       }
 
       this.opts.onMessage(jid, {

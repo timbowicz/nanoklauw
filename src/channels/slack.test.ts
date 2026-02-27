@@ -824,6 +824,81 @@ describe('SlackChannel', () => {
         }),
       );
     });
+
+    it('mention in main channel threads the reply under that message', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      await triggerMessageEvent(createMessageEvent({
+        text: '<@U_BOT_123> hello',
+        ts: '1704067200.000000',
+        user: 'U_USER_456',
+      }));
+
+      await channel.sendMessage('slack:C0123456789', 'Hi there');
+
+      expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: 'C0123456789',
+          text: 'Hi there',
+          thread_ts: '1704067200.000000',
+        }),
+      );
+    });
+
+    it('trigger pattern in main channel replies without threading', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      // First set lastTriggerTs via a mention
+      await triggerMessageEvent(createMessageEvent({
+        text: '<@U_BOT_123> hello',
+        ts: '1704067200.000000',
+        user: 'U_USER_456',
+      }));
+
+      // Then send a trigger-pattern message in main channel (no mention)
+      await triggerMessageEvent(createMessageEvent({
+        text: '@Jonesy what is the weather?',
+        ts: '1704067300.000000',
+        user: 'U_USER_456',
+      }));
+
+      await channel.sendMessage('slack:C0123456789', 'It is sunny');
+
+      const call = currentApp().client.chat.postMessage.mock.calls.at(-1)?.[0];
+      expect(call).toEqual(expect.objectContaining({
+        channel: 'C0123456789',
+        text: 'It is sunny',
+      }));
+      expect(call).not.toHaveProperty('thread_ts');
+    });
+
+    it('message in thread replies in that thread', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      // Mention in a thread
+      await triggerMessageEvent(createMessageEvent({
+        text: '<@U_BOT_123> help',
+        ts: '1704067201.000000',
+        threadTs: '1704067200.000000',
+        user: 'U_USER_456',
+      }));
+
+      await channel.sendMessage('slack:C0123456789', 'Here is help');
+
+      expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: 'C0123456789',
+          text: 'Here is help',
+          thread_ts: '1704067200.000000',
+        }),
+      );
+    });
   });
 
   // --- sendMessage ---
