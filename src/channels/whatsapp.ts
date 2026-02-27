@@ -26,6 +26,8 @@ import {
   RegisteredGroup,
   SendMessageOpts,
 } from '../types.js';
+import { registerChannel } from './registry.js';
+import type { ChannelOpts } from './registry.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -579,3 +581,14 @@ export class WhatsAppChannel implements Channel {
     }
   }
 }
+
+registerChannel('whatsapp', (opts: ChannelOpts) => {
+  const authDir = path.join(STORE_DIR, 'auth');
+  try {
+    if (!fs.existsSync(authDir) || fs.readdirSync(authDir).length === 0)
+      return null;
+  } catch {
+    return null;
+  }
+  return new WhatsAppChannel(opts);
+});

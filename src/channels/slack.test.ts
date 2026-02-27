@@ -2,6 +2,11 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 // --- Mocks ---
 
+// Mock registry to prevent side-effect registration during tests
+vi.mock('./registry.js', () => ({
+  registerChannel: vi.fn(),
+}));
+
 // Mock config
 vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Jonesy',

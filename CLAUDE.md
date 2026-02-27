@@ -4,16 +4,19 @@ Personal Claude assistant. See [README.md](README.md) for philosophy and setup. 
 
 ## Quick Context
 
-Single Node.js process that connects to WhatsApp, routes messages to Claude Agent SDK running in Docker containers. Each group has isolated filesystem and memory.
+Single Node.js process with pluggable multi-channel architecture (WhatsApp, Slack). Channels self-register via factory functions in `src/channels/registry.ts` and are auto-discovered at startup based on available credentials. Messages route to Claude Agent SDK running in Docker containers. Each group has isolated filesystem and memory.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
 | `src/index.ts` | Orchestrator: state, message loop, agent invocation |
+| `src/channels/registry.ts` | Pluggable channel registry with factory pattern |
+| `src/channels/index.ts` | Barrel file — side-effect imports trigger channel self-registration |
 | `src/channels/whatsapp.ts` | WhatsApp connection, auth, send/receive |
+| `src/channels/slack.ts` | Slack Socket Mode connection, auto-registration |
 | `src/ipc.ts` | IPC watcher and task processing |
-| `src/router.ts` | Message formatting and outbound routing |
+| `src/router.ts` | Message formatting, outbound routing, `findChannel` |
 | `src/config.ts` | Trigger pattern, paths, intervals |
 | `src/container-runner.ts` | Spawns agent containers with mounts |
 | `src/task-scheduler.ts` | Runs scheduled tasks |
@@ -202,7 +205,10 @@ test: "npx vitest run src/channels/<name>.test.ts"
 ### Currently Applied Local Customizations
 
 Track what's been modified from upstream here so future merges are predictable:
-- WhatsApp channel (`src/channels/whatsapp.ts`) — customized from upstream
+- Channel registry (`src/channels/registry.ts`) — pluggable channel architecture (adopted from upstream PR #500)
+- Channel barrel (`src/channels/index.ts`) — side-effect imports for self-registration
+- WhatsApp channel (`src/channels/whatsapp.ts`) — customized from upstream, self-registers
+- Slack channel (`src/channels/slack.ts`) — new channel, self-registers
 - IPC system (`src/ipc.ts`) — local modifications
 - Container runner (`src/container-runner.ts`) — local modifications
 - Router (`src/router.ts`) — local modifications

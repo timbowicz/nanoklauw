@@ -3,7 +3,7 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { findChannel } from './channel-manager.js';
+import { findChannel } from './router.js';
 import {
   DATA_DIR,
   IPC_POLL_INTERVAL,

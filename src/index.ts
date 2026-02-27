@@ -2,7 +2,12 @@ import fs from 'fs';
 import path from 'path';
 
 import { maybeAutoRegister } from './auto-register.js';
-import { findChannel, initializeChannels } from './channel-manager.js';
+import './channels/index.js';
+import {
+  getChannelFactory,
+  getRegisteredChannelNames,
+} from './channels/registry.js';
+import type { ChannelOpts } from './channels/registry.js';
 import {
   ASSISTANT_NAME,
   IDLE_TIMEOUT,
@@ -41,7 +46,7 @@ import { resolveGroupFolderPath } from './group-folder.js';
 import { ImageHandler } from './image-handler.js';
 import { createIpcDeps, startIpcWatcher } from './ipc.js';
 import { applyImageDescriptions, DocumentRef, ImageRef } from './media-processing.js';
-import { formatMessages, formatOutbound } from './router.js';
+import { findChannel, formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { handleApprovalResponse, getPendingApprovalIds } from './network-proxy.js';
 import { ensureRestrictedNetwork, stopRestrictedNetwork } from './restricted-network.js';
@@ -528,8 +533,8 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  // Create and connect channels
-  channels = await initializeChannels({
+  // Create and connect channels via pluggable registry
+  const channelOpts: ChannelOpts = {
     onMessage: (_chatJid: string, msg: NewMessage) => {
       // Check if this is a reply to a pending network proxy approval
       if (msg.quotedMessageId && !msg.is_bot_message) {
@@ -563,7 +568,22 @@ async function main(): Promise<void> {
     onReaction: (originalMessageId: string, approved: boolean) => {
       handleApprovalResponse(originalMessageId, approved);
     },
-  });
+  };
+
+  for (const name of getRegisteredChannelNames()) {
+    const factory = getChannelFactory(name)!;
+    const channel = factory(channelOpts);
+    if (!channel) {
+      logger.info({ channel: name }, 'Channel not configured, skipping');
+      continue;
+    }
+    channels.push(channel);
+    await channel.connect();
+  }
+  if (channels.length === 0) {
+    logger.fatal('No channels connected');
+    process.exit(1);
+  }
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({

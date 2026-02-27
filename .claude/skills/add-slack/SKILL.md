@@ -1,11 +1,11 @@
 ---
 name: add-slack
-description: Add Slack as an input channel without removing WhatsApp. Supports gateway modes (whatsapp/slack/both), auto-registration for Slack channels/DMs, ephemeral status updates, and /abort to cancel long-running processing.
+description: Add Slack as an input channel without removing WhatsApp. Uses the pluggable channel registry for auto-detection. Supports auto-registration for Slack channels/DMs, ephemeral status updates, and /abort to cancel long-running processing.
 ---
 
 # Add Slack Channel
 
-This skill adds Slack support to NanoClaw using the skills engine for deterministic code changes, then walks through interactive setup.
+This skill adds Slack support to NanoClaw using the pluggable channel registry pattern, then walks through interactive setup.
 
 ## Phase 1: Pre-flight
 
@@ -15,12 +15,7 @@ Read `.nanoclaw/state.yaml`. If `slack` is in `applied_skills`, skip to Phase 3 
 
 ### Ask the user
 
-1. **Mode**: Which gateway mode?
-   - `whatsapp` (default) — WhatsApp only
-   - `slack` — Slack only (disables WhatsApp)
-   - `both` — Both channels active
-
-2. **Do they already have a Slack app configured?** If yes, collect the Bot Token and App Token now. If no, we'll create one in Phase 3.
+**Do they already have a Slack app configured?** If yes, collect the Bot Token and App Token now. If no, we'll create one in Phase 3.
 
 ## Phase 2: Apply Code Changes
 
@@ -43,20 +38,15 @@ npx tsx scripts/apply-skill.ts .claude/skills/add-slack
 ```
 
 This deterministically:
-- Adds `src/channels/slack.ts` (SlackChannel class implementing Channel interface)
+- Adds `src/channels/slack.ts` (SlackChannel class implementing Channel interface, with self-registration via `registerChannel()`)
 - Adds `src/channels/slack.test.ts` (unit tests)
-- Adds `src/channel-manager.ts` (channel initialization extracted from index.ts)
-- Three-way merges Slack support into `src/index.ts` (uses channel-manager.ts)
-- Three-way merges Slack config into `src/config.ts` (GATEWAY_CHANNEL export)
-- Three-way merges updated routing tests into `src/routing.test.ts`
+- Three-way merges `src/channels/index.ts` to add the Slack import for self-registration
 - Installs the `@slack/bolt` npm dependency
-- Updates `.env.example` with `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_SIGNING_SECRET`, and `GATEWAY_CHANNEL`
+- Updates `.env.example` with `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_SIGNING_SECRET`
 - Records the application in `.nanoclaw/state.yaml`
 
 If the apply reports merge conflicts, read the intent files:
-- `modify/src/index.ts.intent.md` — what changed and invariants for index.ts
-- `modify/src/config.ts.intent.md` — what changed for config.ts
-- `modify/src/routing.test.ts.intent.md` — what changed for routing tests
+- `modify/src/channels/index.ts.intent.md` — what changed for the barrel file
 
 ### Validate code changes
 
@@ -89,11 +79,12 @@ Wait for the user to provide both tokens.
 Add to `.env`:
 
 ```bash
-GATEWAY_CHANNEL=both
 SLACK_BOT_TOKEN=xoxb-your-bot-token
 SLACK_APP_TOKEN=xapp-your-app-token
 SLACK_SIGNING_SECRET=your-signing-secret
 ```
+
+Channels auto-detect from credentials: if Slack tokens are present in `.env`, the Slack channel starts automatically. No `GATEWAY_CHANNEL` setting needed.
 
 Sync to container environment:
 
@@ -155,9 +146,8 @@ journalctl -u nanoklauw -f
 ### Bot not responding
 
 1. Check `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, and `SLACK_SIGNING_SECRET` are set in `.env`
-2. Check `GATEWAY_CHANNEL` is set to `slack` or `both`
-3. Check channel is registered: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE 'slack:%'"`
-4. Service is running: `systemctl status nanoklauw`
+2. Check channel is registered: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE 'slack:%'"`
+3. Service is running: `systemctl status nanoklauw`
 
 ### Bot connected but not receiving messages
 
@@ -185,7 +175,7 @@ The Slack channel supports:
 - **Public channels** — Bot must be added to the channel
 - **Private channels** — Bot must be invited to the channel
 - **Direct messages** — Users can DM the bot directly
-- **Multi-channel** — Controlled by `GATEWAY_CHANNEL` (whatsapp/slack/both)
+- **Multi-channel** — Both WhatsApp and Slack run simultaneously when credentials are present
 - **Auto-registration** — Channels register on first bot mention, DMs on first message
 - **/abort** — Cancel active processing via slash command or text
 - **Hourglass typing** — Emoji reaction on trigger message while processing

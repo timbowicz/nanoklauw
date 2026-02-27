@@ -3,6 +3,11 @@ import { EventEmitter } from 'events';
 
 // --- Mocks ---
 
+// Mock registry to prevent side-effect registration during tests
+vi.mock('./registry.js', () => ({
+  registerChannel: vi.fn(),
+}));
+
 // Mock config
 vi.mock('../config.js', () => ({
   STORE_DIR: '/tmp/nanoclaw-test-store',

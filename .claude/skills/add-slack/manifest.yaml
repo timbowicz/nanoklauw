@@ -1,23 +1,19 @@
 skill: slack
-version: 1.0.0
-description: "Slack Socket Mode integration with auto-registration, ephemeral status, /abort, and GATEWAY_CHANNEL mode"
+version: 2.0.0
+description: "Slack Socket Mode integration with auto-registration, ephemeral status, /abort, and pluggable channel registry"
 core_version: 0.1.0
 adds:
   - src/channels/slack.ts
   - src/channels/slack.test.ts
-  - src/channel-manager.ts
 modifies:
-  - src/index.ts
-  - src/config.ts
-  - src/routing.test.ts
+  - src/channels/index.ts
 structured:
   npm_dependencies:
     "@slack/bolt": "^4.6.0"
   env_additions:
-    - GATEWAY_CHANNEL
     - SLACK_BOT_TOKEN
     - SLACK_APP_TOKEN
     - SLACK_SIGNING_SECRET
 conflicts: []
 depends: []
-test: "npx vitest run src/channels/slack.test.ts src/routing.test.ts"
+test: "npx vitest run src/channels/slack.test.ts"

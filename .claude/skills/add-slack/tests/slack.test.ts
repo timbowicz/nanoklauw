@@ -11,7 +11,6 @@ describe('slack skill package', () => {
 
     const content = fs.readFileSync(manifestPath, 'utf-8');
     expect(content).toContain('skill: slack');
-    expect(content).toContain('version: 1.0.0');
     expect(content).toContain('@slack/bolt');
   });
 
@@ -31,28 +30,17 @@ describe('slack skill package', () => {
     expect(testContent).toContain("describe('SlackChannel'");
   });
 
-  it('has all files declared in modifies', () => {
-    const indexFile = path.join(skillDir, 'modify', 'src', 'index.ts');
-    const configFile = path.join(skillDir, 'modify', 'src', 'config.ts');
-    const routingTestFile = path.join(skillDir, 'modify', 'src', 'routing.test.ts');
+  it('has barrel file modification for self-registration', () => {
+    const barrelFile = path.join(skillDir, 'modify', 'src', 'channels', 'index.ts');
+    expect(fs.existsSync(barrelFile)).toBe(true);
 
-    expect(fs.existsSync(indexFile)).toBe(true);
-    expect(fs.existsSync(configFile)).toBe(true);
-    expect(fs.existsSync(routingTestFile)).toBe(true);
-
-    const indexContent = fs.readFileSync(indexFile, 'utf-8');
-    expect(indexContent).toContain('initializeChannels');
-    expect(indexContent).toContain('findChannel');
-    expect(indexContent).toContain('channels: Channel[]');
-
-    const configContent = fs.readFileSync(configFile, 'utf-8');
-    expect(configContent).toContain('GATEWAY_CHANNEL');
+    const content = fs.readFileSync(barrelFile, 'utf-8');
+    expect(content).toContain("import './slack.js'");
+    expect(content).toContain("import './whatsapp.js'");
   });
 
-  it('has intent files for modified files', () => {
-    expect(fs.existsSync(path.join(skillDir, 'modify', 'src', 'index.ts.intent.md'))).toBe(true);
-    expect(fs.existsSync(path.join(skillDir, 'modify', 'src', 'config.ts.intent.md'))).toBe(true);
-    expect(fs.existsSync(path.join(skillDir, 'modify', 'src', 'routing.test.ts.intent.md'))).toBe(true);
+  it('has intent file for barrel modification', () => {
+    expect(fs.existsSync(path.join(skillDir, 'modify', 'src', 'channels', 'index.ts.intent.md'))).toBe(true);
   });
 
   it('has setup documentation', () => {
@@ -64,25 +52,6 @@ describe('slack skill package', () => {
     expect(
       fs.existsSync(path.join(skillDir, 'references', 'slack-app-manifest.yaml')),
     ).toBe(true);
-  });
-
-  it('modified routing.test.ts includes Slack JID tests', () => {
-    const content = fs.readFileSync(
-      path.join(skillDir, 'modify', 'src', 'routing.test.ts'),
-      'utf-8',
-    );
-
-    // Slack JID pattern tests
-    expect(content).toContain('slack:C');
-    expect(content).toContain('slack:D');
-
-    // Mixed ordering test
-    expect(content).toContain('mixes WhatsApp and Slack');
-
-    // All original WhatsApp tests preserved
-    expect(content).toContain('@g.us');
-    expect(content).toContain('@s.whatsapp.net');
-    expect(content).toContain('__group_sync__');
   });
 
   it('slack.ts implements required Channel interface methods', () => {

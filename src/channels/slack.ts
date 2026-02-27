@@ -12,6 +12,8 @@ import {
   RegisteredGroup,
   SendMessageOpts,
 } from '../types.js';
+import { registerChannel } from './registry.js';
+import type { ChannelOpts } from './registry.js';
 
 // Slack's chat.postMessage API limits text to ~4000 characters per call.
 // Messages exceeding this are split into sequential chunks.
@@ -514,3 +516,15 @@ export class SlackChannel implements Channel {
     }
   }
 }
+
+registerChannel('slack', (opts: ChannelOpts) => {
+  const env = readEnvFile(['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN']);
+  if (!env.SLACK_BOT_TOKEN || !env.SLACK_APP_TOKEN) return null;
+  return new SlackChannel({
+    onMessage: opts.onMessage,
+    onChatMetadata: opts.onChatMetadata,
+    registeredGroups: opts.registeredGroups,
+    registerGroup: opts.registerGroup,
+    onAbort: opts.onAbort!,
+  });
+});
