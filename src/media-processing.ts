@@ -7,11 +7,15 @@ import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import type { WAMessage, WASocket } from '@whiskeysockets/baileys';
 import fs from 'fs';
 import path from 'path';
+import sharp from 'sharp';
 
 import { DATA_DIR } from './config.js';
 import { updateMessageContent } from './db.js';
 import { logger } from './logger.js';
 import { DocumentBlock, ImageBlock, NewMessage } from './types.js';
+
+const MAX_IMAGE_DIMENSION = 1024;
+const JPEG_QUALITY = 85;
 
 /** Map MIME types to file extensions. Defaults to 'jpg' for unknown types. */
 function mimeToExt(mime: string): string {
@@ -36,6 +40,59 @@ function detectMimeFromBuffer(buffer: Buffer, declaredMime: string): string {
   if (buffer.length >= 12 && buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46
       && buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) return 'image/webp';
   return declaredMime;
+}
+
+/**
+ * Resize an image to max 1024px on longest side, convert to JPEG (or keep PNG if it has alpha).
+ * Returns the resized buffer and output MIME type, or null on failure.
+ */
+export async function resizeImage(
+  buffer: Buffer,
+  mimetype: string,
+): Promise<{ buffer: Buffer; mimetype: string } | null> {
+  try {
+    const image = sharp(buffer);
+    const metadata = await image.metadata();
+
+    if (!metadata.width || !metadata.height) {
+      logger.warn('Could not read image dimensions, skipping resize');
+      return { buffer, mimetype };
+    }
+
+    // Determine output format: keep PNG if it has alpha channel, otherwise JPEG
+    const keepPng = mimetype === 'image/png' && metadata.hasAlpha;
+
+    let pipeline = image.resize(MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION, {
+      fit: 'inside',
+      withoutEnlargement: true,
+    });
+
+    let outputMime: string;
+    if (keepPng) {
+      pipeline = pipeline.png();
+      outputMime = 'image/png';
+    } else {
+      pipeline = pipeline.jpeg({ quality: JPEG_QUALITY });
+      outputMime = 'image/jpeg';
+    }
+
+    const resizedBuffer = await pipeline.toBuffer();
+
+    logger.info(
+      {
+        originalSize: buffer.length,
+        resizedSize: resizedBuffer.length,
+        originalDimensions: `${metadata.width}x${metadata.height}`,
+        outputFormat: keepPng ? 'png' : 'jpeg',
+      },
+      'Image resized',
+    );
+
+    return { buffer: resizedBuffer, mimetype: outputMime };
+  } catch (err) {
+    logger.error({ err }, 'Failed to resize image, using original');
+    return { buffer, mimetype };
+  }
 }
 
 /**
@@ -65,16 +122,21 @@ export async function downloadImage(
     }
 
     const declaredMime = msg.message.imageMessage.mimetype || 'image/jpeg';
-    const mimetype = detectMimeFromBuffer(buffer, declaredMime);
-    if (mimetype !== declaredMime) {
-      logger.warn({ declaredMime, actualMime: mimetype }, 'Image MIME mismatch, using detected type');
+    const detectedMime = detectMimeFromBuffer(buffer, declaredMime);
+    if (detectedMime !== declaredMime) {
+      logger.warn({ declaredMime, actualMime: detectedMime }, 'Image MIME mismatch, using detected type');
     }
-    logger.info({ size: buffer.length, mimetype }, 'Downloaded image');
+    logger.info({ size: buffer.length, mimetype: detectedMime }, 'Downloaded image');
+
+    // Resize to reduce API token usage
+    const resized = await resizeImage(buffer, detectedMime);
+    const finalBuffer = resized ? resized.buffer : buffer;
+    const finalMime = resized ? resized.mimetype : detectedMime;
 
     return {
       type: 'image',
-      media_type: mimetype,
-      data: buffer.toString('base64'),
+      media_type: finalMime,
+      data: finalBuffer.toString('base64'),
     };
   } catch (err) {
     logger.error({ err }, 'Failed to download image');
