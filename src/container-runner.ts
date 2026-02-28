@@ -195,14 +195,16 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Gmail credentials directory (for Gmail MCP inside the container)
+  // Gmail credentials directory (for Gmail MCP inside the container).
+  // Read-only for non-main groups to prevent token exfiltration.
+  // Main group needs read-write for OAuth token refresh.
   const homeDir = os.homedir();
   const gmailDir = path.join(homeDir, '.gmail-mcp');
   if (fs.existsSync(gmailDir)) {
     mounts.push({
       hostPath: gmailDir,
       containerPath: '/home/node/.gmail-mcp',
-      readonly: false, // MCP may need to refresh OAuth tokens
+      readonly: !isMain,
     });
   }
 
@@ -213,19 +215,18 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Bitwarden CLI cache: persistent vault data so bw doesn't re-sync from scratch
-  if (group.containerConfig?.bitwarden) {
-    const bwCacheDir = path.join(DATA_DIR, 'bitwarden', group.folder);
-    fs.mkdirSync(bwCacheDir, { recursive: true });
-    try {
-      fs.chownSync(bwCacheDir, CONTAINER_UID, CONTAINER_GID);
-    } catch {}
-    mounts.push({
-      hostPath: bwCacheDir,
-      containerPath: '/home/node/.config/Bitwarden CLI',
-      readonly: false,
-    });
-  }
+  // Bitwarden CLI cache: persistent vault data so bw doesn't re-sync from scratch.
+  // Always mounted — all groups have Bitwarden access.
+  const bwCacheDir = path.join(DATA_DIR, 'bitwarden', group.folder);
+  fs.mkdirSync(bwCacheDir, { recursive: true });
+  try {
+    fs.chownSync(bwCacheDir, CONTAINER_UID, CONTAINER_GID);
+  } catch {}
+  mounts.push({
+    hostPath: bwCacheDir,
+    containerPath: '/home/node/.config/Bitwarden CLI',
+    readonly: false,
+  });
 
   // Copy agent-runner source into a per-group location so each group gets
   // its own copy. Recompiled on container startup via entrypoint.sh.
@@ -275,7 +276,6 @@ function readSecrets(): Record<string, string> {
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
-  bitwarden: boolean,
   isMain: boolean,
   networkMode?: 'full' | 'restricted' | 'none',
 ): string[] {
@@ -313,16 +313,13 @@ function buildContainerArgs(
   args.push('-e', 'DISABLE_ERROR_REPORTING=1');
   args.push('-e', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1');
 
-  // Bitwarden credentials are passed via stdin JSON (input.secrets) alongside
-  // other secrets — NOT as Docker env vars (which are visible via docker inspect).
-  // The container entrypoint extracts them from /tmp/input.json before bw login.
-  if (bitwarden) {
-    args.push('-e', 'BW_ENABLED=1');
-  }
+  // Bitwarden is always enabled. Credentials are passed via stdin JSON (input.secrets),
+  // NOT as Docker env vars (which are visible via docker inspect).
+  args.push('-e', 'BW_ENABLED=1');
 
-  // Network isolation: non-main containers default to restricted network
-  // Main containers keep full network (WebFetch/WebSearch need it)
-  const effectiveNetworkMode = networkMode ?? (isMain ? 'full' : 'restricted');
+  // Network: all containers default to full network access.
+  // Per-group override via containerConfig.networkMode still supported.
+  const effectiveNetworkMode = networkMode ?? 'full';
   if (effectiveNetworkMode === 'none') {
     args.push('--network', 'none');
     args.push('-e', 'NETWORK_PROXY=true');
@@ -361,7 +358,6 @@ export async function runContainerAgent(
   const containerArgs = buildContainerArgs(
     mounts,
     containerName,
-    !!group.containerConfig?.bitwarden,
     input.isMain,
     group.containerConfig?.networkMode,
   );
