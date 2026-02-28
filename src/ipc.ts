@@ -11,7 +11,7 @@ import {
   TIMEZONE,
 } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import { createTask, deleteTask, getMessageFromMe, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { Channel, RegisteredGroup, SendMessageOpts } from './types.js';
@@ -39,6 +39,7 @@ export interface IpcDeps {
     availableGroups: AvailableGroup[],
     registeredJids: Set<string>,
   ) => void;
+  sendReaction: (jid: string, emoji: string, messageId?: string) => Promise<void>;
   sendMessageWithId?: (
     jid: string,
     text: string,
@@ -85,6 +86,18 @@ export function createIpcDeps(cfg: {
       ),
     getAvailableGroups: cfg.getAvailableGroups,
     writeGroupsSnapshot: cfg.writeGroupsSnapshot,
+    sendReaction: async (jid, emoji, messageId) => {
+      const channel = findChannel(cfg.channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      if (messageId) {
+        if (!channel.sendReaction) throw new Error('Channel does not support sendReaction');
+        const messageKey = { id: messageId, remoteJid: jid, fromMe: getMessageFromMe(messageId, jid) };
+        await channel.sendReaction(jid, messageKey, emoji);
+      } else {
+        if (!channel.reactToLatestMessage) throw new Error('Channel does not support reactions');
+        await channel.reactToLatestMessage(jid, emoji);
+      }
+    },
     sendMessageWithId: (jid, text) => {
       const channel = findChannel(cfg.channels, jid);
       if (!channel?.sendMessageWithId) return Promise.resolve(undefined);
@@ -484,6 +497,31 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   deps,
                   registeredGroups,
                 );
+              } else if (
+                data.type === 'reaction' &&
+                data.chatJid &&
+                data.emoji
+              ) {
+                const targetGroup = registeredGroups[data.chatJid];
+                if (canAccessJid(sourceGroup, targetGroup?.folder, isMain)) {
+                  try {
+                    await deps.sendReaction(data.chatJid, data.emoji, data.messageId);
+                    logger.info(
+                      { chatJid: data.chatJid, emoji: data.emoji, sourceGroup },
+                      'IPC reaction sent',
+                    );
+                  } catch (err) {
+                    logger.error(
+                      { chatJid: data.chatJid, emoji: data.emoji, sourceGroup, err },
+                      'IPC reaction failed',
+                    );
+                  }
+                } else {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized IPC reaction attempt blocked',
+                  );
+                }
               }
               fs.unlinkSync(filePath);
             } catch (err) {
