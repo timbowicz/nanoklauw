@@ -28,7 +28,8 @@ export function slugifyGroupName(
 
 /**
  * If `chatJid` is an unregistered group, register it automatically with
- * `requiresTrigger: true` so the bot only responds when @mentioned.
+ * `requiresTrigger: false` so the agent sees every message and can decide
+ * for itself whether a response is warranted (always responds to @mentions).
  */
 export function maybeAutoRegister(
   chatJid: string,
@@ -44,6 +45,6 @@ export function maybeAutoRegister(
     folder: folderName,
     trigger: `@${ASSISTANT_NAME}`,
     added_at: new Date().toISOString(),
-    requiresTrigger: true,
+    requiresTrigger: false,
   });
 }

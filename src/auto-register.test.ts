@@ -63,7 +63,7 @@ describe('maybeAutoRegister', () => {
     expect(registerGroup.mock.calls[0][1]).toMatchObject({
       name: 'New Group',
       folder: 'new-group',
-      requiresTrigger: true,
+      requiresTrigger: false,
     });
   });
 
