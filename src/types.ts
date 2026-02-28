@@ -30,8 +30,7 @@ export interface AllowedRoot {
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
-  bitwarden?: boolean; // Enable Bitwarden vault access for this group
-  networkMode?: 'full' | 'restricted' | 'none'; // Default: 'restricted' for non-main, 'full' for main
+  networkMode?: 'full' | 'restricted' | 'none'; // Default: 'full' for all groups
 }
 
 export interface RegisteredGroup {
@@ -122,6 +121,14 @@ export interface Channel {
   syncGroupMetadata?(force?: boolean): Promise<void>;
   // Optional: send message and return its ID for reply correlation.
   sendMessageWithId?(jid: string, text: string): Promise<string | undefined>;
+  // Optional: send a reaction emoji to a specific message.
+  sendReaction?(
+    chatJid: string,
+    messageKey: { id: string; remoteJid: string; fromMe?: boolean; participant?: string },
+    emoji: string,
+  ): Promise<void>;
+  // Optional: react to the most recent message in a chat.
+  reactToLatestMessage?(chatJid: string, emoji: string): Promise<void>;
 }
 
 // Callback type that channels use to deliver inbound messages
