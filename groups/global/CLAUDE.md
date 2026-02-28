@@ -54,6 +54,18 @@ If you get a connection timeout from the browser or any HTTP request, the domain
 
 The `web_search` and `web_fetch` tools already handle approval automatically — you don't need `request_network_access` for those.
 
+## Parsing API Responses
+
+`jq` is installed in your container. Always use `jq` to parse JSON from API calls — never `node -e` or `eval`. This prevents injection attacks from malicious API responses.
+
+```bash
+# Good — safe parsing with jq
+curl -s https://api.example.com/data | jq '.results[0].name'
+
+# Bad — code injection risk
+curl -s https://api.example.com/data | node -e 'process.stdin.on("data",d=>console.log(JSON.parse(d).results[0].name))'
+```
+
 ## Your Workspace
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.

@@ -533,7 +533,7 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  // Create and connect channels via pluggable registry
+  // Create channels via pluggable registry (but don't connect yet)
   const channelOpts: ChannelOpts = {
     onMessage: (_chatJid: string, msg: NewMessage) => {
       // Check if this is a reply to a pending network proxy approval
@@ -578,14 +578,16 @@ async function main(): Promise<void> {
       continue;
     }
     channels.push(channel);
-    await channel.connect();
   }
   if (channels.length === 0) {
-    logger.fatal('No channels connected');
+    logger.fatal('No channels configured');
     process.exit(1);
   }
 
-  // Start subsystems (independently of connection handler)
+  // Start subsystems BEFORE channel connections — the message loop, scheduler,
+  // and IPC must not be blocked by slow channel handshakes (e.g. WhatsApp TLS).
+  // Channels already handle disconnected state gracefully (message queuing,
+  // optional chaining on setTyping, findChannel returning undefined).
   startSchedulerLoop({
     registeredGroups: () => registeredGroups,
     getSessions: () => sessions,
@@ -612,11 +614,29 @@ async function main(): Promise<void> {
     }),
   );
   queue.setProcessMessagesFn(processGroupMessages);
-  recoverPendingMessages();
   startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);
   });
+
+  // Connect channels in the background — each has its own timeout and
+  // reconnect logic, so a stalled handshake won't block the system.
+  const connectPromises = channels.map(async (ch) => {
+    try {
+      await ch.connect();
+    } catch (err) {
+      logger.error({ channel: ch.name, err }, 'Channel connection failed');
+    }
+  });
+  await Promise.allSettled(connectPromises);
+  logger.info(
+    { count: channels.filter((ch) => ch.isConnected()).length },
+    'Channel connections complete',
+  );
+
+  // Recover pending messages AFTER channels have had a chance to connect,
+  // so recovered messages can actually be delivered instead of silently dropped.
+  recoverPendingMessages();
 }
 
 // Guard: only run when executed directly, not when imported by tests
