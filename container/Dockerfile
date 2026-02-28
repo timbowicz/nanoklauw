@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     curl \
     git \
+    jq \
     python3 \
     python3-pip \
     poppler-utils \
