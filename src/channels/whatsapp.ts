@@ -16,7 +16,12 @@ import {
   ASSISTANT_NAME,
   STORE_DIR,
 } from '../config.js';
-import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
+import {
+  getLastGroupSync,
+  setLastGroupSync,
+  updateChatName,
+  updateRegisteredGroupName,
+} from '../db.js';
 import { logger } from '../logger.js';
 import { downloadDocument, downloadImage } from '../media-processing.js';
 import {
@@ -490,10 +495,19 @@ export class WhatsAppChannel implements Channel {
       logger.info('Syncing group metadata from WhatsApp...');
       const groups = await this.sock.groupFetchAllParticipating();
 
+      const registeredGroups = this.opts.registeredGroups();
       let count = 0;
       for (const [jid, metadata] of Object.entries(groups)) {
         if (metadata.subject) {
           updateChatName(jid, metadata.subject);
+          // Also update registered_groups name if it was set to the JID at auto-registration
+          const reg = registeredGroups[jid];
+          if (reg && reg.name !== metadata.subject) {
+            if (updateRegisteredGroupName(jid, metadata.subject)) {
+              reg.name = metadata.subject;
+              logger.debug({ jid, name: metadata.subject }, 'Updated registered group name');
+            }
+          }
           count++;
         }
       }

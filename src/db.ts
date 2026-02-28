@@ -348,6 +348,20 @@ export function updateChatName(chatJid: string, name: string): void {
   ).run(chatJid, name, new Date().toISOString());
 }
 
+/**
+ * Update name of a registered group (if it exists).
+ * Used by group metadata sync to fix names that were unknown at auto-registration.
+ */
+export function updateRegisteredGroupName(
+  jid: string,
+  name: string,
+): boolean {
+  const result = db
+    .prepare('UPDATE registered_groups SET name = ? WHERE jid = ?')
+    .run(name, jid);
+  return result.changes > 0;
+}
+
 export interface ChatInfo {
   jid: string;
   name: string;

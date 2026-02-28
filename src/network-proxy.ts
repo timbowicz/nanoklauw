@@ -448,82 +448,28 @@ export async function handleProxyWebSearch(
   deps: ProxyDeps,
 ): Promise<void> {
   const { requestId, query } = data;
-  const groupName = deps.getGroupName(sourceGroup);
 
-  // For search, always require approval (no domain to allowlist)
-  const mainJid = deps.getMainChatJid();
-  if (!mainJid) {
-    writeProxyResponse(
-      sourceGroup,
-      requestId,
-      'denied',
-      undefined,
-      'No main channel configured.',
-    );
-    return;
-  }
-
-  const approvalText = `[${groupName}] agent wants to search: "${query}"\n\nReply yes/no or react 👍/👎 (5 min timeout)`;
+  // Web search is always allowed — it's a Google query, not arbitrary URL fetching
   logger.info(
     { requestId, query, sourceGroup },
-    'Sending search approval request to main channel',
+    'Web search auto-approved',
   );
-  const sentId = await deps.sendMessageWithId(mainJid, approvalText);
-
-  if (!sentId) {
-    logger.warn({ requestId }, 'Failed to send search approval message');
+  try {
+    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+    const result = await fetchUrl(searchUrl);
+    const truncated =
+      result.length > 100_000
+        ? result.slice(0, 100_000) + '\n\n[Truncated]'
+        : result;
+    writeProxyResponse(sourceGroup, requestId, 'approved', truncated);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     writeProxyResponse(
       sourceGroup,
       requestId,
-      'denied',
+      'approved',
       undefined,
-      'Failed to send approval request.',
-    );
-    return;
-  }
-
-  logger.info(
-    { requestId, messageId: sentId },
-    'Search approval message sent, waiting for response',
-  );
-  const approved = await requestApproval(
-    requestId,
-    sourceGroup,
-    groupName,
-    query,
-    sentId,
-  );
-
-  if (approved) {
-    logger.info(
-      { requestId, query, sourceGroup },
-      'Network proxy search approved',
-    );
-    try {
-      const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
-      const result = await fetchUrl(searchUrl);
-      const truncated =
-        result.length > 100_000
-          ? result.slice(0, 100_000) + '\n\n[Truncated]'
-          : result;
-      writeProxyResponse(sourceGroup, requestId, 'approved', truncated);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      writeProxyResponse(
-        sourceGroup,
-        requestId,
-        'approved',
-        undefined,
-        `Search failed: ${msg}`,
-      );
-    }
-  } else {
-    writeProxyResponse(
-      sourceGroup,
-      requestId,
-      'denied',
-      undefined,
-      `Web search was denied by the user.`,
+      `Search failed: ${msg}`,
     );
   }
 }
