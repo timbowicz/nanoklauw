@@ -40,6 +40,7 @@ export interface WhatsAppChannelOpts {
 
 const BASE_RECONNECT_MS = 2_000;
 const MAX_RECONNECT_MS = 5 * 60_000; // 5 minutes
+const CONNECT_TIMEOUT_MS = 30_000; // 30s — don't block startup forever
 
 export class WhatsAppChannel implements Channel {
   name = 'whatsapp';
@@ -60,9 +61,16 @@ export class WhatsAppChannel implements Channel {
   }
 
   async connect(): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
+    const connected = new Promise<void>((resolve, reject) => {
       this.connectInternal(resolve).catch(reject);
     });
+    const timeout = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        logger.warn('WhatsApp connect timed out, continuing startup — reconnect will keep trying in the background');
+        resolve();
+      }, CONNECT_TIMEOUT_MS);
+    });
+    await Promise.race([connected, timeout]);
   }
 
   private async connectInternal(onFirstOpen?: () => void): Promise<void> {
