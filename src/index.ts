@@ -116,9 +116,32 @@ function loadState(): void {
   );
 }
 
+let saveStateTimer: ReturnType<typeof setTimeout> | undefined;
+const SAVE_STATE_DEBOUNCE_MS = 1000;
+
 function saveState(): void {
-  setRouterState('last_timestamp', lastTimestamp);
-  setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
+  if (saveStateTimer) return; // already scheduled
+  saveStateTimer = setTimeout(() => {
+    saveStateTimer = undefined;
+    setRouterState('last_timestamp', lastTimestamp);
+    setRouterState(
+      'last_agent_timestamp',
+      JSON.stringify(lastAgentTimestamp),
+    );
+  }, SAVE_STATE_DEBOUNCE_MS);
+}
+
+/** Flush pending state immediately (for shutdown). */
+function flushState(): void {
+  if (saveStateTimer) {
+    clearTimeout(saveStateTimer);
+    saveStateTimer = undefined;
+    setRouterState('last_timestamp', lastTimestamp);
+    setRouterState(
+      'last_agent_timestamp',
+      JSON.stringify(lastAgentTimestamp),
+    );
+  }
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -600,6 +623,7 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    flushState();
     stopRestrictedNetwork();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
