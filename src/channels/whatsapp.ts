@@ -41,6 +41,7 @@ export interface WhatsAppChannelOpts {
 const BASE_RECONNECT_MS = 2_000;
 const MAX_RECONNECT_MS = 5 * 60_000; // 5 minutes
 const CONNECT_TIMEOUT_MS = 30_000; // 30s — don't block startup forever
+const MAX_OUTGOING_QUEUE = 100;
 
 export class WhatsAppChannel implements Channel {
   name = 'whatsapp';
@@ -337,6 +338,13 @@ export class WhatsAppChannel implements Channel {
     const mentions = opts?.mentions;
 
     if (!this.connected) {
+      if (this.outgoingQueue.length >= MAX_OUTGOING_QUEUE) {
+        logger.warn(
+          { jid, queueSize: this.outgoingQueue.length },
+          'WA outgoing queue full, dropping oldest message',
+        );
+        this.outgoingQueue.shift();
+      }
       this.outgoingQueue.push({ jid, text: prefixed, mentions });
       logger.info(
         { jid, length: prefixed.length, queueSize: this.outgoingQueue.length },
@@ -359,6 +367,10 @@ export class WhatsAppChannel implements Channel {
       logger.info({ jid, length: prefixed.length }, 'Message sent');
     } catch (err) {
       // If send fails, queue it for retry on reconnect
+      if (this.outgoingQueue.length >= MAX_OUTGOING_QUEUE) {
+        logger.warn({ jid }, 'WA outgoing queue full, dropping oldest message');
+        this.outgoingQueue.shift();
+      }
       this.outgoingQueue.push({ jid, text: prefixed, mentions });
       logger.warn(
         { jid, err, queueSize: this.outgoingQueue.length },

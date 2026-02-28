@@ -15,6 +15,8 @@ import { logger } from './logger.js';
 
 const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const FETCH_TIMEOUT_MS = 30 * 1000; // 30 seconds for the actual fetch
+const MAX_REDIRECTS = 5;
+const MAX_RESPONSE_BYTES = 1024 * 1024; // 1MB — output is truncated to 100KB anyway
 
 interface PendingRequest {
   requestId: string;
@@ -89,24 +91,84 @@ function writeProxyResponse(
 }
 
 /**
+ * Check if a hostname resolves to a private/internal IP range.
+ */
+function isPrivateHost(hostname: string): boolean {
+  // Block obvious private hostnames
+  if (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname === '0.0.0.0'
+  ) {
+    return true;
+  }
+  // Block private IP ranges
+  const parts = hostname.split('.').map(Number);
+  if (parts.length === 4 && parts.every((p) => !isNaN(p))) {
+    if (parts[0] === 10) return true; // 10.0.0.0/8
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true; // 172.16.0.0/12
+    if (parts[0] === 192 && parts[1] === 168) return true; // 192.168.0.0/16
+    if (parts[0] === 169 && parts[1] === 254) return true; // 169.254.0.0/16 (link-local/cloud metadata)
+    if (parts[0] === 127) return true; // 127.0.0.0/8
+  }
+  return false;
+}
+
+/**
  * Perform HTTP(S) fetch and return the response body as text.
  */
-async function fetchUrl(url: string): Promise<string> {
+async function fetchUrl(
+  url: string,
+  redirectsRemaining = MAX_REDIRECTS,
+): Promise<string> {
   return new Promise((resolve, reject) => {
+    // Only allow http(s) schemes
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      return reject(new Error(`Blocked non-HTTP URL scheme: ${url}`));
+    }
+
+    // Block private/internal IPs (SSRF protection)
+    try {
+      const parsed = new URL(url);
+      if (isPrivateHost(parsed.hostname)) {
+        return reject(
+          new Error(`Blocked request to private host: ${parsed.hostname}`),
+        );
+      }
+    } catch {
+      return reject(new Error(`Invalid URL: ${url}`));
+    }
+
     const mod = url.startsWith('https') ? https : http;
     const req = mod.get(url, { timeout: FETCH_TIMEOUT_MS }, (res) => {
-      // Follow redirects
+      // Follow redirects with depth limit
       if (
         res.statusCode &&
         res.statusCode >= 300 &&
         res.statusCode < 400 &&
         res.headers.location
       ) {
-        fetchUrl(res.headers.location).then(resolve, reject);
+        if (redirectsRemaining <= 0) {
+          return reject(new Error('Too many redirects'));
+        }
+        fetchUrl(res.headers.location, redirectsRemaining - 1).then(
+          resolve,
+          reject,
+        );
         return;
       }
       const chunks: Buffer[] = [];
-      res.on('data', (chunk) => chunks.push(chunk));
+      let totalBytes = 0;
+      res.on('data', (chunk) => {
+        totalBytes += chunk.length;
+        if (totalBytes > MAX_RESPONSE_BYTES) {
+          req.destroy();
+          reject(new Error('Response too large'));
+          return;
+        }
+        chunks.push(chunk);
+      });
       res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
       res.on('error', reject);
     });
