@@ -40,7 +40,10 @@ export function extractDomain(url: string): string {
  * Handle an approval reply or reaction from the user.
  * Called by the message handler when it detects a reply to a pending approval message.
  */
-export function handleApprovalResponse(messageId: string, approved: boolean): boolean {
+export function handleApprovalResponse(
+  messageId: string,
+  approved: boolean,
+): boolean {
   const pending = pendingApprovals.get(messageId);
   if (!pending) return false;
   clearTimeout(pending.timeoutHandle);
@@ -93,7 +96,12 @@ async function fetchUrl(url: string): Promise<string> {
     const mod = url.startsWith('https') ? https : http;
     const req = mod.get(url, { timeout: FETCH_TIMEOUT_MS }, (res) => {
       // Follow redirects
-      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+      if (
+        res.statusCode &&
+        res.statusCode >= 300 &&
+        res.statusCode < 400 &&
+        res.headers.location
+      ) {
         fetchUrl(res.headers.location).then(resolve, reject);
         return;
       }
@@ -103,7 +111,10 @@ async function fetchUrl(url: string): Promise<string> {
       res.on('error', reject);
     });
     req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('Fetch timeout')); });
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Fetch timeout'));
+    });
   });
 }
 
@@ -121,7 +132,10 @@ function requestApproval(
   return new Promise((resolve) => {
     const timeoutHandle = setTimeout(() => {
       pendingApprovals.delete(messageId);
-      logger.info({ requestId, domain, groupFolder }, 'Network proxy approval timed out');
+      logger.info(
+        { requestId, domain, groupFolder },
+        'Network proxy approval timed out',
+      );
       resolve(false);
     }, APPROVAL_TIMEOUT_MS);
 
@@ -160,17 +174,28 @@ export async function handleProxyWebFetch(
 
   // Check allowlist first
   if (isAllowlisted(domain)) {
-    logger.info({ requestId, domain, sourceGroup }, 'Domain allowlisted, fetching directly');
+    logger.info(
+      { requestId, domain, sourceGroup },
+      'Domain allowlisted, fetching directly',
+    );
     try {
       const result = await fetchUrl(url);
       // Truncate to 100KB to avoid huge IPC files
-      const truncated = result.length > 100_000
-        ? result.slice(0, 100_000) + '\n\n[Truncated — content exceeded 100KB]'
-        : result;
+      const truncated =
+        result.length > 100_000
+          ? result.slice(0, 100_000) +
+            '\n\n[Truncated — content exceeded 100KB]'
+          : result;
       writeProxyResponse(sourceGroup, requestId, 'approved', truncated);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      writeProxyResponse(sourceGroup, requestId, 'approved', undefined, `Fetch failed: ${msg}`);
+      writeProxyResponse(
+        sourceGroup,
+        requestId,
+        'approved',
+        undefined,
+        `Fetch failed: ${msg}`,
+      );
     }
     return;
   }
@@ -178,8 +203,17 @@ export async function handleProxyWebFetch(
   // Send approval request to main channel
   const mainJid = deps.getMainChatJid();
   if (!mainJid) {
-    logger.error({ requestId }, 'No main channel JID found, denying proxy request');
-    writeProxyResponse(sourceGroup, requestId, 'denied', undefined, 'No main channel configured.');
+    logger.error(
+      { requestId },
+      'No main channel JID found, denying proxy request',
+    );
+    writeProxyResponse(
+      sourceGroup,
+      requestId,
+      'denied',
+      undefined,
+      'No main channel configured.',
+    );
     return;
   }
 
@@ -188,24 +222,47 @@ export async function handleProxyWebFetch(
 
   if (!sentId) {
     logger.error({ requestId }, 'Failed to send approval message, denying');
-    writeProxyResponse(sourceGroup, requestId, 'denied', undefined, 'Failed to send approval request.');
+    writeProxyResponse(
+      sourceGroup,
+      requestId,
+      'denied',
+      undefined,
+      'Failed to send approval request.',
+    );
     return;
   }
 
-  const approved = await requestApproval(requestId, sourceGroup, groupName, domain, sentId);
+  const approved = await requestApproval(
+    requestId,
+    sourceGroup,
+    groupName,
+    domain,
+    sentId,
+  );
 
   if (approved) {
     addToAllowlist(domain, sourceGroup);
-    logger.info({ requestId, domain, sourceGroup }, 'Network proxy approved, domain allowlisted');
+    logger.info(
+      { requestId, domain, sourceGroup },
+      'Network proxy approved, domain allowlisted',
+    );
     try {
       const result = await fetchUrl(url);
-      const truncated = result.length > 100_000
-        ? result.slice(0, 100_000) + '\n\n[Truncated — content exceeded 100KB]'
-        : result;
+      const truncated =
+        result.length > 100_000
+          ? result.slice(0, 100_000) +
+            '\n\n[Truncated — content exceeded 100KB]'
+          : result;
       writeProxyResponse(sourceGroup, requestId, 'approved', truncated);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      writeProxyResponse(sourceGroup, requestId, 'approved', undefined, `Fetch failed: ${msg}`);
+      writeProxyResponse(
+        sourceGroup,
+        requestId,
+        'approved',
+        undefined,
+        `Fetch failed: ${msg}`,
+      );
     }
   } else {
     logger.info({ requestId, domain, sourceGroup }, 'Network proxy denied');
@@ -238,7 +295,10 @@ export async function handleNetworkAccessRequest(
 
   // Check allowlist first — auto-approve if already allowed (static config or DB)
   if (isAllowlisted(domain) || RESTRICTED_ALLOWED_DOMAINS.includes(domain)) {
-    logger.info({ requestId, domain, sourceGroup }, 'Domain already allowlisted, auto-approving network access');
+    logger.info(
+      { requestId, domain, sourceGroup },
+      'Domain already allowlisted, auto-approving network access',
+    );
     writeProxyResponse(sourceGroup, requestId, 'approved');
     return;
   }
@@ -246,8 +306,17 @@ export async function handleNetworkAccessRequest(
   // Send approval request to main channel
   const mainJid = deps.getMainChatJid();
   if (!mainJid) {
-    logger.error({ requestId }, 'No main channel JID found, denying network access request');
-    writeProxyResponse(sourceGroup, requestId, 'denied', undefined, 'No main channel configured.');
+    logger.error(
+      { requestId },
+      'No main channel JID found, denying network access request',
+    );
+    writeProxyResponse(
+      sourceGroup,
+      requestId,
+      'denied',
+      undefined,
+      'No main channel configured.',
+    );
     return;
   }
 
@@ -256,22 +325,40 @@ export async function handleNetworkAccessRequest(
 
   if (!sentId) {
     logger.error({ requestId }, 'Failed to send approval message, denying');
-    writeProxyResponse(sourceGroup, requestId, 'denied', undefined, 'Failed to send approval request.');
+    writeProxyResponse(
+      sourceGroup,
+      requestId,
+      'denied',
+      undefined,
+      'Failed to send approval request.',
+    );
     return;
   }
 
-  const approved = await requestApproval(requestId, sourceGroup, groupName, domain, sentId);
+  const approved = await requestApproval(
+    requestId,
+    sourceGroup,
+    groupName,
+    domain,
+    sentId,
+  );
 
   if (approved) {
     addToAllowlist(domain, sourceGroup);
-    logger.info({ requestId, domain, sourceGroup }, 'Network access approved, domain allowlisted');
+    logger.info(
+      { requestId, domain, sourceGroup },
+      'Network access approved, domain allowlisted',
+    );
 
     // Refresh iptables rules so the domain is reachable immediately
     try {
       const { refreshAllowedIps } = await import('./restricted-network.js');
       await refreshAllowedIps();
     } catch (err) {
-      logger.warn({ err }, 'Failed to refresh iptables after domain approval (rules will update on next cycle)');
+      logger.warn(
+        { err },
+        'Failed to refresh iptables after domain approval (rules will update on next cycle)',
+      );
     }
 
     writeProxyResponse(sourceGroup, requestId, 'approved');
@@ -304,35 +391,69 @@ export async function handleProxyWebSearch(
   // For search, always require approval (no domain to allowlist)
   const mainJid = deps.getMainChatJid();
   if (!mainJid) {
-    writeProxyResponse(sourceGroup, requestId, 'denied', undefined, 'No main channel configured.');
+    writeProxyResponse(
+      sourceGroup,
+      requestId,
+      'denied',
+      undefined,
+      'No main channel configured.',
+    );
     return;
   }
 
   const approvalText = `[${groupName}] agent wants to search: "${query}"\n\nReply yes/no or react 👍/👎 (5 min timeout)`;
-  logger.info({ requestId, query, sourceGroup }, 'Sending search approval request to main channel');
+  logger.info(
+    { requestId, query, sourceGroup },
+    'Sending search approval request to main channel',
+  );
   const sentId = await deps.sendMessageWithId(mainJid, approvalText);
 
   if (!sentId) {
     logger.warn({ requestId }, 'Failed to send search approval message');
-    writeProxyResponse(sourceGroup, requestId, 'denied', undefined, 'Failed to send approval request.');
+    writeProxyResponse(
+      sourceGroup,
+      requestId,
+      'denied',
+      undefined,
+      'Failed to send approval request.',
+    );
     return;
   }
 
-  logger.info({ requestId, messageId: sentId }, 'Search approval message sent, waiting for response');
-  const approved = await requestApproval(requestId, sourceGroup, groupName, query, sentId);
+  logger.info(
+    { requestId, messageId: sentId },
+    'Search approval message sent, waiting for response',
+  );
+  const approved = await requestApproval(
+    requestId,
+    sourceGroup,
+    groupName,
+    query,
+    sentId,
+  );
 
   if (approved) {
-    logger.info({ requestId, query, sourceGroup }, 'Network proxy search approved');
+    logger.info(
+      { requestId, query, sourceGroup },
+      'Network proxy search approved',
+    );
     try {
       const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
       const result = await fetchUrl(searchUrl);
-      const truncated = result.length > 100_000
-        ? result.slice(0, 100_000) + '\n\n[Truncated]'
-        : result;
+      const truncated =
+        result.length > 100_000
+          ? result.slice(0, 100_000) + '\n\n[Truncated]'
+          : result;
       writeProxyResponse(sourceGroup, requestId, 'approved', truncated);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      writeProxyResponse(sourceGroup, requestId, 'approved', undefined, `Search failed: ${msg}`);
+      writeProxyResponse(
+        sourceGroup,
+        requestId,
+        'approved',
+        undefined,
+        `Search failed: ${msg}`,
+      );
     }
   } else {
     writeProxyResponse(

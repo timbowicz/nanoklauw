@@ -63,7 +63,12 @@ export class SlackChannel implements Channel {
   private app: App;
   private botUserId: string | undefined;
   private connected = false;
-  private outgoingQueue: Array<{ jid: string; text: string; threadTs?: string; mentions?: string[] }> = [];
+  private outgoingQueue: Array<{
+    jid: string;
+    text: string;
+    threadTs?: string;
+    mentions?: string[];
+  }> = [];
   private flushing = false;
   private userNameCache = new Map<string, string>();
   private lastTriggerTs = new Map<string, string>();
@@ -76,7 +81,11 @@ export class SlackChannel implements Channel {
 
     // Read tokens from .env (not process.env — keeps secrets off the environment
     // so they don't leak to child processes, matching NanoClaw's security pattern)
-    const env = readEnvFile(['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'SLACK_SIGNING_SECRET']);
+    const env = readEnvFile([
+      'SLACK_BOT_TOKEN',
+      'SLACK_APP_TOKEN',
+      'SLACK_SIGNING_SECRET',
+    ]);
     const botToken = env.SLACK_BOT_TOKEN;
     const appToken = env.SLACK_APP_TOKEN;
     const signingSecret = env.SLACK_SIGNING_SECRET;
@@ -103,7 +112,11 @@ export class SlackChannel implements Channel {
     this.app.command('/abort', async ({ ack, command }) => {
       const jid = `slack:${command.channel_id}`;
       const cancelled = await this.opts.onAbort(jid);
-      await ack(cancelled ? 'Abort requested.' : 'No active run to abort in this channel.');
+      await ack(
+        cancelled
+          ? 'Abort requested.'
+          : 'No active run to abort in this channel.',
+      );
     });
 
     // Use app.event('message') instead of app.message() to capture all
@@ -124,7 +137,9 @@ export class SlackChannel implements Channel {
 
       // Build content from text + file attachment placeholders
       let content = msg.text || '';
-      const files = (msg as { files?: Array<{ name?: string; mimetype?: string }> }).files;
+      const files = (
+        msg as { files?: Array<{ name?: string; mimetype?: string }> }
+      ).files;
       if (files?.length) {
         for (const f of files) {
           const label = f.mimetype?.startsWith('image/') ? 'Image' : 'File';
@@ -133,7 +148,8 @@ export class SlackChannel implements Channel {
       }
       if (!content.trim()) return;
 
-      const isBotMessage = !!(msg as { bot_id?: string }).bot_id || msg.user === this.botUserId;
+      const isBotMessage =
+        !!(msg as { bot_id?: string }).bot_id || msg.user === this.botUserId;
 
       // Check for text-based abort command before anything else
       if (!isBotMessage && this.isAbortCommand(content)) {
@@ -142,7 +158,9 @@ export class SlackChannel implements Channel {
           await this.postEphemeralStatus(
             jid,
             msg.user,
-            cancelled ? 'Abort requested.' : 'No active run to abort in this channel.',
+            cancelled
+              ? 'Abort requested.'
+              : 'No active run to abort in this channel.',
           );
         }
         return;
@@ -161,7 +179,8 @@ export class SlackChannel implements Channel {
         if (!isDm && !mentioned) return; // unregistered channel, no mention -> ignore
 
         const channelName = await this.resolveChannelName(msg.channel);
-        const folderBase = slugify(channelName) || `slack-${msg.channel.toLowerCase()}`;
+        const folderBase =
+          slugify(channelName) || `slack-${msg.channel.toLowerCase()}`;
         const folder = `${folderBase}-${msg.channel.toLowerCase().slice(-6)}`;
 
         this.opts.registerGroup(jid, {
@@ -172,7 +191,10 @@ export class SlackChannel implements Channel {
           requiresTrigger: !isDm,
         });
 
-        logger.info({ jid, channelName, folder }, 'Auto-registered Slack channel as group');
+        logger.info(
+          { jid, channelName, folder },
+          'Auto-registered Slack channel as group',
+        );
       }
 
       const userId = msg.user ?? '';
@@ -181,16 +203,16 @@ export class SlackChannel implements Channel {
         senderName = ASSISTANT_NAME;
       } else {
         senderName =
-          (await this.resolveUserName(userId)) ||
-          userId ||
-          'unknown';
+          (await this.resolveUserName(userId)) || userId || 'unknown';
       }
 
       // Translate Slack <@UBOTID> mentions into TRIGGER_PATTERN format.
       // Slack encodes @mentions as <@U12345>, which won't match TRIGGER_PATTERN
       // (e.g., ^@<ASSISTANT_NAME>\b), so we replace the mention and prepend the trigger.
       if (this.botUserId && !isBotMessage && mentioned) {
-        content = content.replace(new RegExp(`<@${this.botUserId}>`, 'g'), '').trim();
+        content = content
+          .replace(new RegExp(`<@${this.botUserId}>`, 'g'), '')
+          .trim();
         if (!TRIGGER_PATTERN.test(content)) {
           content = `@${ASSISTANT_NAME} ${content}`;
         }
@@ -209,7 +231,13 @@ export class SlackChannel implements Channel {
 
       // Auto-trigger for replies in bot-active threads
       const threadTs = (msg as { thread_ts?: string }).thread_ts;
-      if (!mentioned && !isBotMessage && threadTs && this.botActiveThreads.has(threadTs) && !TRIGGER_PATTERN.test(content)) {
+      if (
+        !mentioned &&
+        !isBotMessage &&
+        threadTs &&
+        this.botActiveThreads.has(threadTs) &&
+        !TRIGGER_PATTERN.test(content)
+      ) {
         content = `@${ASSISTANT_NAME} ${content}`;
       }
 
@@ -217,9 +245,10 @@ export class SlackChannel implements Channel {
       // - @mention in main channel → thread under that message
       // - any trigger in a thread → reply in that thread
       // - trigger pattern (no @mention) in main channel → reply in channel
-      const willTrigger = mentioned
-        || (!isBotMessage && threadTs && this.botActiveThreads.has(threadTs))
-        || TRIGGER_PATTERN.test(content);
+      const willTrigger =
+        mentioned ||
+        (!isBotMessage && threadTs && this.botActiveThreads.has(threadTs)) ||
+        TRIGGER_PATTERN.test(content);
 
       if (willTrigger && msg.ts) {
         if (mentioned && !threadTs) {
@@ -255,10 +284,7 @@ export class SlackChannel implements Channel {
       this.botUserId = auth.user_id as string;
       logger.info({ botUserId: this.botUserId }, 'Connected to Slack');
     } catch (err) {
-      logger.warn(
-        { err },
-        'Connected to Slack but failed to get bot user ID',
-      );
+      logger.warn({ err }, 'Connected to Slack but failed to get bot user ID');
     }
 
     this.connected = true;
@@ -270,7 +296,11 @@ export class SlackChannel implements Channel {
     await this.syncChannelMetadata();
   }
 
-  async sendMessage(jid: string, text: string, opts?: SendMessageOpts): Promise<void> {
+  async sendMessage(
+    jid: string,
+    text: string,
+    opts?: SendMessageOpts,
+  ): Promise<void> {
     const channelId = jid.replace(/^slack:/, '');
 
     if (!this.connected) {
@@ -300,7 +330,11 @@ export class SlackChannel implements Channel {
     try {
       // Slack limits messages to ~4000 characters; split if needed
       if (mentionedText.length <= MAX_MESSAGE_LENGTH) {
-        await this.app.client.chat.postMessage({ channel: channelId, text: mentionedText, ...(threadTs && { thread_ts: threadTs }) });
+        await this.app.client.chat.postMessage({
+          channel: channelId,
+          text: mentionedText,
+          ...(threadTs && { thread_ts: threadTs }),
+        });
       } else {
         for (let i = 0; i < mentionedText.length; i += MAX_MESSAGE_LENGTH) {
           await this.app.client.chat.postMessage({
@@ -326,7 +360,12 @@ export class SlackChannel implements Channel {
       logger.info({ jid, length: text.length }, 'Slack message sent');
     } catch (err) {
       if (this.outgoingQueue.length < MAX_OUTGOING_QUEUE) {
-        this.outgoingQueue.push({ jid, text, threadTs, mentions: opts?.mentions });
+        this.outgoingQueue.push({
+          jid,
+          text,
+          threadTs,
+          mentions: opts?.mentions,
+        });
       }
       logger.warn(
         { jid, err, queueSize: this.outgoingQueue.length },
@@ -358,9 +397,17 @@ export class SlackChannel implements Channel {
     const channelId = jid.replace(/^slack:/, '');
     try {
       if (isTyping) {
-        await this.app.client.reactions.add({ channel: channelId, timestamp: ts, name: 'hourglass_flowing_sand' });
+        await this.app.client.reactions.add({
+          channel: channelId,
+          timestamp: ts,
+          name: 'hourglass_flowing_sand',
+        });
       } else {
-        await this.app.client.reactions.remove({ channel: channelId, timestamp: ts, name: 'hourglass_flowing_sand' });
+        await this.app.client.reactions.remove({
+          channel: channelId,
+          timestamp: ts,
+          name: 'hourglass_flowing_sand',
+        });
       }
     } catch {
       // Reaction failures are non-critical (message may be deleted, bot may lack permission)
@@ -413,19 +460,22 @@ export class SlackChannel implements Channel {
 
   private async resolveChannelName(channelId: string): Promise<string> {
     try {
-      const info = await this.app.client.conversations.info({ channel: channelId });
+      const info = await this.app.client.conversations.info({
+        channel: channelId,
+      });
       const c = info.channel as { name?: string; user?: string } | undefined;
       if (c?.name) return c.name;
       if (c?.user) return `dm-${c.user.toLowerCase()}`;
     } catch (err) {
-      logger.warn({ err, channelId }, 'Could not fetch Slack channel name, using ID fallback');
+      logger.warn(
+        { err, channelId },
+        'Could not fetch Slack channel name, using ID fallback',
+      );
     }
     return `slack-${channelId.toLowerCase()}`;
   }
 
-  private async resolveUserName(
-    userId: string,
-  ): Promise<string | undefined> {
+  private async resolveUserName(userId: string): Promise<string | undefined> {
     if (!userId) return undefined;
 
     const cached = this.userNameCache.get(userId);
@@ -442,7 +492,11 @@ export class SlackChannel implements Channel {
     }
   }
 
-  async postEphemeralStatus(jid: string, userId: string, text: string): Promise<void> {
+  async postEphemeralStatus(
+    jid: string,
+    userId: string,
+    text: string,
+  ): Promise<void> {
     const channelId = jid.replace(/^slack:/, '');
     try {
       await this.app.client.chat.postEphemeral({
@@ -451,7 +505,10 @@ export class SlackChannel implements Channel {
         text,
       });
     } catch (err) {
-      logger.debug({ err, jid, userId }, 'Failed to post Slack ephemeral status');
+      logger.debug(
+        { err, jid, userId },
+        'Failed to post Slack ephemeral status',
+      );
     }
   }
 

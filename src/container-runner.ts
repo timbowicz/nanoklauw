@@ -21,7 +21,11 @@ import {
 import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
-import { CONTAINER_RUNTIME_BIN, readonlyMountArgs, stopContainerArgs } from './container-runtime.js';
+import {
+  CONTAINER_RUNTIME_BIN,
+  readonlyMountArgs,
+  stopContainerArgs,
+} from './container-runtime.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -273,10 +277,18 @@ function buildContainerArgs(
   isMain: boolean,
   networkMode?: 'full' | 'restricted' | 'none',
 ): string[] {
-  const args: string[] = ['run', '-i', '--rm', '--name', containerName,
-    '--memory', '2g',
-    '--pids-limit', '256',
-    '--security-opt', 'no-new-privileges:true',
+  const args: string[] = [
+    'run',
+    '-i',
+    '--rm',
+    '--name',
+    containerName,
+    '--memory',
+    '2g',
+    '--pids-limit',
+    '256',
+    '--security-opt',
+    'no-new-privileges:true',
   ];
 
   // Pass host timezone so container's local time matches the user's
@@ -300,9 +312,12 @@ function buildContainerArgs(
   // Bitwarden credentials for entrypoint login/unlock
   if (bitwarden) {
     const secrets = readSecrets();
-    if (secrets.BW_CLIENTID) args.push('-e', `BW_CLIENTID=${secrets.BW_CLIENTID}`);
-    if (secrets.BW_CLIENTSECRET) args.push('-e', `BW_CLIENTSECRET=${secrets.BW_CLIENTSECRET}`);
-    if (secrets.BW_PASSWORD) args.push('-e', `BW_PASSWORD=${secrets.BW_PASSWORD}`);
+    if (secrets.BW_CLIENTID)
+      args.push('-e', `BW_CLIENTID=${secrets.BW_CLIENTID}`);
+    if (secrets.BW_CLIENTSECRET)
+      args.push('-e', `BW_CLIENTSECRET=${secrets.BW_CLIENTSECRET}`);
+    if (secrets.BW_PASSWORD)
+      args.push('-e', `BW_PASSWORD=${secrets.BW_PASSWORD}`);
   }
 
   // Network isolation: non-main containers default to restricted network
@@ -484,16 +499,24 @@ export async function runContainerAgent(
 
     const killOnTimeout = () => {
       timedOut = true;
-      logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
-      execFile(CONTAINER_RUNTIME_BIN, stopContainerArgs(containerName), { timeout: 15000 }, (err) => {
-        if (err) {
-          logger.warn(
-            { group: group.name, containerName, err },
-            'Graceful stop failed, force killing',
-          );
-          container.kill('SIGKILL');
-        }
-      });
+      logger.error(
+        { group: group.name, containerName },
+        'Container timeout, stopping gracefully',
+      );
+      execFile(
+        CONTAINER_RUNTIME_BIN,
+        stopContainerArgs(containerName),
+        { timeout: 15000 },
+        (err) => {
+          if (err) {
+            logger.warn(
+              { group: group.name, containerName, err },
+              'Graceful stop failed, force killing',
+            );
+            container.kill('SIGKILL');
+          }
+        },
+      );
     };
 
     let timeout = setTimeout(killOnTimeout, timeoutMs);

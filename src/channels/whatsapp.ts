@@ -50,7 +50,11 @@ export class WhatsAppChannel implements Channel {
   private reconnecting = false;
   private reconnectAttempt = 0;
   private lidToPhoneMap: Record<string, string> = {};
-  private outgoingQueue: Array<{ jid: string; text: string; mentions?: string[] }> = [];
+  private outgoingQueue: Array<{
+    jid: string;
+    text: string;
+    mentions?: string[];
+  }> = [];
   private flushing = false;
   private groupSyncTimerStarted = false;
 
@@ -66,7 +70,9 @@ export class WhatsAppChannel implements Channel {
     });
     const timeout = new Promise<void>((resolve) => {
       setTimeout(() => {
-        logger.warn('WhatsApp connect timed out, continuing startup — reconnect will keep trying in the background');
+        logger.warn(
+          'WhatsApp connect timed out, continuing startup — reconnect will keep trying in the background',
+        );
         resolve();
       }, CONNECT_TIMEOUT_MS);
     });
@@ -132,13 +138,18 @@ export class WhatsAppChannel implements Channel {
           }
           this.reconnecting = true;
           // Close old socket to prevent conflict loops
-          try { this.sock?.end(undefined); } catch {}
+          try {
+            this.sock?.end(undefined);
+          } catch {}
           const delayMs = Math.min(
             BASE_RECONNECT_MS * Math.pow(2, this.reconnectAttempt),
             MAX_RECONNECT_MS,
           );
           this.reconnectAttempt++;
-          logger.info({ attempt: this.reconnectAttempt, delayMs }, 'Reconnecting after delay...');
+          logger.info(
+            { attempt: this.reconnectAttempt, delayMs },
+            'Reconnecting after delay...',
+          );
           setTimeout(() => {
             this.connectInternal().catch((err) => {
               logger.error({ err }, 'Failed to reconnect');
@@ -240,7 +251,8 @@ export class WhatsAppChannel implements Channel {
         if (groups[chatJid]) {
           const hasImage = !!msg.message?.imageMessage;
           const hasDocument = !!msg.message?.documentMessage;
-          const documentFilename = msg.message?.documentMessage?.fileName || 'document';
+          const documentFilename =
+            msg.message?.documentMessage?.fileName || 'document';
           let content =
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
@@ -280,7 +292,8 @@ export class WhatsAppChannel implements Channel {
 
           // Extract quoted message ID for reply correlation (network proxy approvals)
           const quotedMessageId =
-            msg.message?.extendedTextMessage?.contextInfo?.stanzaId || undefined;
+            msg.message?.extendedTextMessage?.contextInfo?.stanzaId ||
+            undefined;
 
           // Download media if present (non-blocking — failure just skips the media)
           const imageData = hasImage
@@ -308,7 +321,11 @@ export class WhatsAppChannel implements Channel {
     });
   }
 
-  async sendMessage(jid: string, text: string, opts?: SendMessageOpts): Promise<void> {
+  async sendMessage(
+    jid: string,
+    text: string,
+    opts?: SendMessageOpts,
+  ): Promise<void> {
     // Prefix bot messages with assistant name so users know who's speaking.
     // On a shared number, prefix is also needed in DMs (including self-chat)
     // to distinguish bot output from user messages.
@@ -332,7 +349,10 @@ export class WhatsAppChannel implements Channel {
         ? await this.resolveMentions(jid, prefixed, mentions)
         : undefined;
       if (resolved) {
-        await this.sock.sendMessage(jid, { text: resolved.text, mentions: resolved.resolvedJids });
+        await this.sock.sendMessage(jid, {
+          text: resolved.text,
+          mentions: resolved.resolvedJids,
+        });
       } else {
         await this.sock.sendMessage(jid, { text: prefixed });
       }
@@ -347,7 +367,10 @@ export class WhatsAppChannel implements Channel {
     }
   }
 
-  async sendMessageWithId(jid: string, text: string): Promise<string | undefined> {
+  async sendMessageWithId(
+    jid: string,
+    text: string,
+  ): Promise<string | undefined> {
     const prefixed = ASSISTANT_HAS_OWN_NUMBER
       ? text
       : `${ASSISTANT_NAME}: ${text}`;
@@ -371,28 +394,41 @@ export class WhatsAppChannel implements Channel {
         image,
         caption: caption || undefined,
       });
-      logger.info({ jid, size: image.length, hasCaption: !!caption }, 'Image sent');
+      logger.info(
+        { jid, size: image.length, hasCaption: !!caption },
+        'Image sent',
+      );
     } catch (err) {
       logger.warn({ jid, err }, 'Failed to send image');
     }
   }
 
-  async sendDocument(jid: string, document: Buffer, filename: string, caption?: string): Promise<void> {
+  async sendDocument(
+    jid: string,
+    document: Buffer,
+    filename: string,
+    caption?: string,
+  ): Promise<void> {
     if (!this.connected) {
       logger.warn({ jid }, 'WA disconnected, cannot send document');
       return;
     }
     try {
-      const mimetype = filename.endsWith('.pdf') ? 'application/pdf'
-        : filename.endsWith('.txt') ? 'text/plain'
-        : 'application/octet-stream';
+      const mimetype = filename.endsWith('.pdf')
+        ? 'application/pdf'
+        : filename.endsWith('.txt')
+          ? 'text/plain'
+          : 'application/octet-stream';
       await this.sock.sendMessage(jid, {
         document,
         mimetype,
         fileName: filename,
         caption: caption || undefined,
       });
-      logger.info({ jid, size: document.length, filename, hasCaption: !!caption }, 'Document sent');
+      logger.info(
+        { jid, size: document.length, filename, hasCaption: !!caption },
+        'Document sent',
+      );
     } catch (err) {
       logger.warn({ jid, err }, 'Failed to send document');
     }
@@ -502,7 +538,10 @@ export class WhatsAppChannel implements Channel {
           if (jid) {
             resolvedJids.push(jid);
             // Rewrite @phone to @resolvedId for clickable display
-            rewritten = rewritten.replaceAll(`@${mention}`, `@${jid.split('@')[0].split(':')[0]}`);
+            rewritten = rewritten.replaceAll(
+              `@${mention}`,
+              `@${jid.split('@')[0].split(':')[0]}`,
+            );
           } else {
             // Fall back to constructing a JID from the phone number
             const fallbackJid = `${cleaned}@s.whatsapp.net`;
@@ -517,9 +556,14 @@ export class WhatsAppChannel implements Channel {
         }
       }
 
-      return resolvedJids.length > 0 ? { resolvedJids, text: rewritten } : undefined;
+      return resolvedJids.length > 0
+        ? { resolvedJids, text: rewritten }
+        : undefined;
     } catch (err) {
-      logger.warn({ err, chatJid, mentionCount: mentions.length }, 'Failed to resolve mentions, sending without');
+      logger.warn(
+        { err, chatJid, mentionCount: mentions.length },
+        'Failed to resolve mentions, sending without',
+      );
       return undefined;
     }
   }

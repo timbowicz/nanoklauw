@@ -17,9 +17,18 @@ import { logger } from './logger.js';
 import { Channel, RegisteredGroup, SendMessageOpts } from './types.js';
 
 export interface IpcDeps {
-  sendMessage: (jid: string, text: string, opts?: SendMessageOpts) => Promise<void>;
+  sendMessage: (
+    jid: string,
+    text: string,
+    opts?: SendMessageOpts,
+  ) => Promise<void>;
   sendImage: (jid: string, image: Buffer, caption?: string) => Promise<void>;
-  sendDocument: (jid: string, document: Buffer, filename: string, caption?: string) => Promise<void>;
+  sendDocument: (
+    jid: string,
+    document: Buffer,
+    filename: string,
+    caption?: string,
+  ) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroupMetadata: (force: boolean) => Promise<void>;
@@ -30,7 +39,10 @@ export interface IpcDeps {
     availableGroups: AvailableGroup[],
     registeredJids: Set<string>,
   ) => void;
-  sendMessageWithId?: (jid: string, text: string) => Promise<string | undefined>;
+  sendMessageWithId?: (
+    jid: string,
+    text: string,
+  ) => Promise<string | undefined>;
   getMainChatJid?: () => string | undefined;
 }
 
@@ -55,26 +67,22 @@ export function createIpcDeps(cfg: {
       const channel = findChannel(cfg.channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       if (!channel.sendImage)
-        throw new Error(
-          `Channel ${channel.name} does not support images`,
-        );
+        throw new Error(`Channel ${channel.name} does not support images`);
       return channel.sendImage(jid, image, caption);
     },
     sendDocument: (jid, document, filename, caption) => {
       const channel = findChannel(cfg.channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       if (!channel.sendDocument)
-        throw new Error(
-          `Channel ${channel.name} does not support documents`,
-        );
+        throw new Error(`Channel ${channel.name} does not support documents`);
       return channel.sendDocument(jid, document, filename, caption);
     },
     registeredGroups: cfg.registeredGroups,
     registerGroup: cfg.registerGroup,
     syncGroupMetadata: (force) =>
-      Promise.all(
-        cfg.channels.map((ch) => ch.syncGroupMetadata?.(force)),
-      ).then(() => {}),
+      Promise.all(cfg.channels.map((ch) => ch.syncGroupMetadata?.(force))).then(
+        () => {},
+      ),
     getAvailableGroups: cfg.getAvailableGroups,
     writeGroupsSnapshot: cfg.writeGroupsSnapshot,
     sendMessageWithId: (jid, text) => {
@@ -84,7 +92,9 @@ export function createIpcDeps(cfg: {
     },
     getMainChatJid: () => {
       const groups = cfg.registeredGroups();
-      const mainEntry = Object.entries(groups).find(([, g]) => g.folder === MAIN_GROUP_FOLDER);
+      const mainEntry = Object.entries(groups).find(
+        ([, g]) => g.folder === MAIN_GROUP_FOLDER,
+      );
       return mainEntry?.[0]; // The JID is the key
     },
   };
@@ -102,14 +112,23 @@ function canAccessJid(
 /** Resolve a container-relative IPC path to a host path.
  *  Validates the resolved path stays within the group's IPC directory
  *  to prevent path traversal attacks from container agents. */
-function resolveIpcPath(containerPath: string, sourceGroup: string): string | null {
+function resolveIpcPath(
+  containerPath: string,
+  sourceGroup: string,
+): string | null {
   const groupIpcBase = path.resolve(path.join(DATA_DIR, 'ipc', sourceGroup));
   // Strip the container prefix and resolve relative to the group's IPC dir
   const relativePart = containerPath.replace(/^\/workspace\/ipc\//, '');
   const resolved = path.resolve(groupIpcBase, relativePart);
   // Ensure resolved path is within the group's IPC directory
-  if (!resolved.startsWith(groupIpcBase + path.sep) && resolved !== groupIpcBase) {
-    logger.warn({ containerPath, sourceGroup, resolved }, 'IPC path traversal blocked');
+  if (
+    !resolved.startsWith(groupIpcBase + path.sep) &&
+    resolved !== groupIpcBase
+  ) {
+    logger.warn(
+      { containerPath, sourceGroup, resolved },
+      'IPC path traversal blocked',
+    );
     return null;
   }
   return resolved;
@@ -124,7 +143,9 @@ async function handleIpcMessage(
 ): Promise<void> {
   const targetGroup = registeredGroups[data.chatJid];
   if (canAccessJid(sourceGroup, targetGroup?.folder, isMain)) {
-    const opts = data.mentions?.length ? { mentions: data.mentions } : undefined;
+    const opts = data.mentions?.length
+      ? { mentions: data.mentions }
+      : undefined;
     await deps.sendMessage(data.chatJid, data.text, opts);
     logger.info({ chatJid: data.chatJid, sourceGroup }, 'IPC message sent');
   } else {
@@ -320,8 +341,12 @@ function cleanupStaleIpcTasks(ipcBaseDir: string): void {
   try {
     const groupFolders = fs.readdirSync(ipcBaseDir).filter((f) => {
       try {
-        return fs.statSync(path.join(ipcBaseDir, f)).isDirectory() && f !== 'errors';
-      } catch { return false; }
+        return (
+          fs.statSync(path.join(ipcBaseDir, f)).isDirectory() && f !== 'errors'
+        );
+      } catch {
+        return false;
+      }
     });
 
     let tasksCleaned = 0;
@@ -333,7 +358,10 @@ function cleanupStaleIpcTasks(ipcBaseDir: string): void {
       if (fs.existsSync(tasksDir)) {
         for (const file of fs.readdirSync(tasksDir)) {
           if (file.endsWith('.json')) {
-            try { fs.unlinkSync(path.join(tasksDir, file)); tasksCleaned++; } catch {}
+            try {
+              fs.unlinkSync(path.join(tasksDir, file));
+              tasksCleaned++;
+            } catch {}
           }
         }
       }
@@ -343,7 +371,10 @@ function cleanupStaleIpcTasks(ipcBaseDir: string): void {
       if (fs.existsSync(inputDir)) {
         for (const file of fs.readdirSync(inputDir)) {
           if (file.startsWith('proxy-response-') && file.endsWith('.json')) {
-            try { fs.unlinkSync(path.join(inputDir, file)); responsesCleaned++; } catch {}
+            try {
+              fs.unlinkSync(path.join(inputDir, file));
+              responsesCleaned++;
+            } catch {}
           }
         }
       }
@@ -412,11 +443,38 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 typeof data.text === 'string' &&
                 data.text.trim() !== ''
               ) {
-                await handleIpcMessage(data, sourceGroup, isMain, deps, registeredGroups);
-              } else if (data.type === 'send_image' && data.chatJid && data.imagePath) {
-                await handleIpcImage(data, sourceGroup, isMain, deps, registeredGroups);
-              } else if (data.type === 'send_document' && data.chatJid && data.filePath && data.filename) {
-                await handleIpcDocument(data, sourceGroup, isMain, deps, registeredGroups);
+                await handleIpcMessage(
+                  data,
+                  sourceGroup,
+                  isMain,
+                  deps,
+                  registeredGroups,
+                );
+              } else if (
+                data.type === 'send_image' &&
+                data.chatJid &&
+                data.imagePath
+              ) {
+                await handleIpcImage(
+                  data,
+                  sourceGroup,
+                  isMain,
+                  deps,
+                  registeredGroups,
+                );
+              } else if (
+                data.type === 'send_document' &&
+                data.chatJid &&
+                data.filePath &&
+                data.filename
+              ) {
+                await handleIpcDocument(
+                  data,
+                  sourceGroup,
+                  isMain,
+                  deps,
+                  registeredGroups,
+                );
               }
               fs.unlinkSync(filePath);
             } catch (err) {
@@ -713,7 +771,9 @@ export async function processTaskIpc(
             getMainChatJid: deps.getMainChatJid!,
             getGroupName: (folder) => {
               const groups = deps.registeredGroups();
-              const entry = Object.values(groups).find(g => g.folder === folder);
+              const entry = Object.values(groups).find(
+                (g) => g.folder === folder,
+              );
               return entry?.name || folder;
             },
           },
@@ -733,7 +793,9 @@ export async function processTaskIpc(
             getMainChatJid: deps.getMainChatJid!,
             getGroupName: (folder) => {
               const groups = deps.registeredGroups();
-              const entry = Object.values(groups).find(g => g.folder === folder);
+              const entry = Object.values(groups).find(
+                (g) => g.folder === folder,
+              );
               return entry?.name || folder;
             },
           },
@@ -744,7 +806,8 @@ export async function processTaskIpc(
 
     case 'request_network_access': {
       if (!isMain && data.requestId && data.domain) {
-        const { handleNetworkAccessRequest } = await import('./network-proxy.js');
+        const { handleNetworkAccessRequest } =
+          await import('./network-proxy.js');
         await handleNetworkAccessRequest(
           { requestId: data.requestId, domain: data.domain },
           sourceGroup,
@@ -753,7 +816,9 @@ export async function processTaskIpc(
             getMainChatJid: deps.getMainChatJid!,
             getGroupName: (folder) => {
               const groups = deps.registeredGroups();
-              const entry = Object.values(groups).find(g => g.folder === folder);
+              const entry = Object.values(groups).find(
+                (g) => g.folder === folder,
+              );
               return entry?.name || folder;
             },
           },

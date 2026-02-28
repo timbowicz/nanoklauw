@@ -25,7 +25,10 @@ export function stopContainerArgs(name: string): string[] {
 /** Ensure the container runtime is running, starting it if needed. */
 export function ensureContainerRuntimeRunning(): void {
   try {
-    execFileSync(CONTAINER_RUNTIME_BIN, ['info'], { stdio: 'pipe', timeout: 10000 });
+    execFileSync(CONTAINER_RUNTIME_BIN, ['info'], {
+      stdio: 'pipe',
+      timeout: 10000,
+    });
     logger.debug('Container runtime already running');
   } catch (err) {
     logger.error({ err }, 'Failed to reach container runtime');
@@ -68,8 +71,12 @@ export function cleanupOrphans(): void {
     const orphans = output.trim().split('\n').filter(Boolean);
     for (const name of orphans) {
       try {
-        execFileSync(CONTAINER_RUNTIME_BIN, stopContainerArgs(name), { stdio: 'pipe' });
-      } catch { /* already stopped */ }
+        execFileSync(CONTAINER_RUNTIME_BIN, stopContainerArgs(name), {
+          stdio: 'pipe',
+        });
+      } catch {
+        /* already stopped */
+      }
     }
     if (orphans.length > 0) {
       logger.info(

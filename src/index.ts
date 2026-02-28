@@ -45,11 +45,21 @@ import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { ImageHandler } from './image-handler.js';
 import { createIpcDeps, startIpcWatcher } from './ipc.js';
-import { applyImageDescriptions, DocumentRef, ImageRef } from './media-processing.js';
+import {
+  applyImageDescriptions,
+  DocumentRef,
+  ImageRef,
+} from './media-processing.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { handleApprovalResponse, getPendingApprovalIds } from './network-proxy.js';
-import { ensureRestrictedNetwork, stopRestrictedNetwork } from './restricted-network.js';
+import {
+  handleApprovalResponse,
+  getPendingApprovalIds,
+} from './network-proxy.js';
+import {
+  ensureRestrictedNetwork,
+  stopRestrictedNetwork,
+} from './restricted-network.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
@@ -176,8 +186,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   documentHandler.attachToMessages(missedMessages);
 
   // Write media files for the container to read
-  const imageRefs = imageHandler.prepareForContainer(group.folder, missedMessages);
-  const documentRefs = documentHandler.prepareForContainer(group.folder, missedMessages);
+  const imageRefs = imageHandler.prepareForContainer(
+    group.folder,
+    missedMessages,
+  );
+  const documentRefs = documentHandler.prepareForContainer(
+    group.folder,
+    missedMessages,
+  );
 
   const prompt = formatMessages(missedMessages);
 
@@ -189,7 +205,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   saveState();
 
   logger.info(
-    { group: group.name, messageCount: missedMessages.length, imageCount: imageRefs.length, documentCount: documentRefs.length },
+    {
+      group: group.name,
+      messageCount: missedMessages.length,
+      imageCount: imageRefs.length,
+      documentCount: documentRefs.length,
+    },
     'Processing messages',
   );
 
@@ -211,36 +232,46 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
-    // Streaming output callback — called for each agent result
-    if (result.result) {
-      const raw =
-        typeof result.result === 'string'
-          ? result.result
-          : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      let text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+  const output = await runAgent(
+    group,
+    prompt,
+    chatJid,
+    async (result) => {
+      // Streaming output callback — called for each agent result
+      if (result.result) {
+        const raw =
+          typeof result.result === 'string'
+            ? result.result
+            : JSON.stringify(result.result);
+        // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
+        let text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
 
-      // Parse image-description tags, update DB, strip from output
-      text = applyImageDescriptions(missedMessages, text, chatJid);
+        // Parse image-description tags, update DB, strip from output
+        text = applyImageDescriptions(missedMessages, text, chatJid);
 
-      logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
-      if (text) {
-        await channel.sendMessage(chatJid, text);
-        outputSentToUser = true;
+        logger.info(
+          { group: group.name },
+          `Agent output: ${raw.slice(0, 200)}`,
+        );
+        if (text) {
+          await channel.sendMessage(chatJid, text);
+          outputSentToUser = true;
+        }
+        // Only reset idle timer on actual results, not session-update markers (result: null)
+        resetIdleTimer();
       }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
-      resetIdleTimer();
-    }
 
-    if (result.status === 'success') {
-      queue.notifyIdle(chatJid);
-    }
+      if (result.status === 'success') {
+        queue.notifyIdle(chatJid);
+      }
 
-    if (result.status === 'error') {
-      hadError = true;
-    }
-  }, imageRefs, documentRefs);
+      if (result.status === 'error') {
+        hadError = true;
+      }
+    },
+    imageRefs,
+    documentRefs,
+  );
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -334,7 +365,9 @@ async function runAgent(
         isMain,
         assistantName: ASSISTANT_NAME,
         ...(imageRefs && imageRefs.length > 0 ? { images: imageRefs } : {}),
-        ...(documentRefs && documentRefs.length > 0 ? { documents: documentRefs } : {}),
+        ...(documentRefs && documentRefs.length > 0
+          ? { documents: documentRefs }
+          : {}),
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -444,8 +477,15 @@ async function startMessageLoop(): Promise<void> {
 
           if (hasMedia) {
             // Write media files first so the container can read them
-            const pipedImageRefs = hasImages ? imageHandler.prepareForContainer(group.folder, messagesToSend) : [];
-            const pipedDocumentRefs = hasDocuments ? documentHandler.prepareForContainer(group.folder, messagesToSend) : [];
+            const pipedImageRefs = hasImages
+              ? imageHandler.prepareForContainer(group.folder, messagesToSend)
+              : [];
+            const pipedDocumentRefs = hasDocuments
+              ? documentHandler.prepareForContainer(
+                  group.folder,
+                  messagesToSend,
+                )
+              : [];
             piped = queue.sendMessage(
               chatJid,
               formatted,
@@ -454,8 +494,10 @@ async function startMessageLoop(): Promise<void> {
             );
             if (!piped) {
               // Piping failed — clean up files, processGroupMessages will re-write
-              if (pipedImageRefs.length > 0) imageHandler.cleanup(group.folder, pipedImageRefs);
-              if (pipedDocumentRefs.length > 0) documentHandler.cleanup(group.folder, pipedDocumentRefs);
+              if (pipedImageRefs.length > 0)
+                imageHandler.cleanup(group.folder, pipedImageRefs);
+              if (pipedDocumentRefs.length > 0)
+                documentHandler.cleanup(group.folder, pipedDocumentRefs);
             }
           } else {
             piped = queue.sendMessage(chatJid, formatted);
@@ -558,13 +600,26 @@ async function main(): Promise<void> {
       }
       storeMessage(msg);
     },
-    onChatMetadata: (chatJid: string, timestamp: string, name?: string, channel?: string, isGroup?: boolean) => {
+    onChatMetadata: (
+      chatJid: string,
+      timestamp: string,
+      name?: string,
+      channel?: string,
+      isGroup?: boolean,
+    ) => {
       storeChatMetadata(chatJid, timestamp, name, channel, isGroup);
-      maybeAutoRegister(chatJid, name, isGroup, registeredGroups, registerGroup);
+      maybeAutoRegister(
+        chatJid,
+        name,
+        isGroup,
+        registeredGroups,
+        registerGroup,
+      );
     },
     registeredGroups: () => registeredGroups,
     registerGroup,
-    onAbort: async (chatJid: string): Promise<boolean> => queue.abortGroup(chatJid),
+    onAbort: async (chatJid: string): Promise<boolean> =>
+      queue.abortGroup(chatJid),
     onReaction: (originalMessageId: string, approved: boolean) => {
       handleApprovalResponse(originalMessageId, approved);
     },
@@ -610,7 +665,8 @@ async function main(): Promise<void> {
       registeredGroups: () => registeredGroups,
       registerGroup,
       getAvailableGroups,
-      writeGroupsSnapshot: (gf, im, ag, rj) => writeGroupsSnapshot(gf, im, ag, rj),
+      writeGroupsSnapshot: (gf, im, ag, rj) =>
+        writeGroupsSnapshot(gf, im, ag, rj),
     }),
   );
   queue.setProcessMessagesFn(processGroupMessages);

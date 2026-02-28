@@ -145,9 +145,11 @@ function createSchema(database: Database.Database): void {
  */
 function migrateSlackJidPrefix(database: Database.Database): void {
   // Check if any raw Slack JIDs exist in registered_groups (quick probe)
-  const probe = database.prepare(
-    `SELECT 1 FROM registered_groups WHERE jid GLOB ? AND jid NOT LIKE 'slack:%' LIMIT 1`,
-  ).get('[CDG][A-Z0-9]*');
+  const probe = database
+    .prepare(
+      `SELECT 1 FROM registered_groups WHERE jid GLOB ? AND jid NOT LIKE 'slack:%' LIMIT 1`,
+    )
+    .get('[CDG][A-Z0-9]*');
   if (!probe) return; // No migration needed
 
   logger.info('Migrating raw Slack JIDs to slack: prefix format...');
@@ -157,50 +159,76 @@ function migrateSlackJidPrefix(database: Database.Database): void {
   try {
     // Remove auto-created duplicates that collide with old JIDs being migrated.
     // The old entries have real message history; the new slack:-prefixed ones are empty.
-    database.prepare(`
+    database
+      .prepare(
+        `
       DELETE FROM messages WHERE chat_jid IN (
         SELECT 'slack:' || jid FROM chats
         WHERE jid GLOB ? AND jid NOT LIKE 'slack:%'
       ) AND chat_jid LIKE 'slack:%'
-    `).run('[CDG][A-Z0-9]*');
+    `,
+      )
+      .run('[CDG][A-Z0-9]*');
 
-    database.prepare(`
+    database
+      .prepare(
+        `
       DELETE FROM registered_groups WHERE jid IN (
         SELECT 'slack:' || jid FROM registered_groups
         WHERE jid GLOB ? AND jid NOT LIKE 'slack:%'
       ) AND jid LIKE 'slack:%'
-    `).run('[CDG][A-Z0-9]*');
+    `,
+      )
+      .run('[CDG][A-Z0-9]*');
 
-    database.prepare(`
+    database
+      .prepare(
+        `
       DELETE FROM chats WHERE jid IN (
         SELECT 'slack:' || jid FROM chats
         WHERE jid GLOB ? AND jid NOT LIKE 'slack:%'
       ) AND jid LIKE 'slack:%'
-    `).run('[CDG][A-Z0-9]*');
+    `,
+      )
+      .run('[CDG][A-Z0-9]*');
 
     // Now rename old JIDs to slack: prefix
     // chats table
-    database.prepare(`
+    database
+      .prepare(
+        `
       UPDATE chats SET jid = 'slack:' || jid
       WHERE jid GLOB ? AND jid NOT LIKE 'slack:%'
-    `).run('[CDG][A-Z0-9]*');
+    `,
+      )
+      .run('[CDG][A-Z0-9]*');
 
     // registered_groups table
-    database.prepare(`
+    database
+      .prepare(
+        `
       UPDATE registered_groups SET jid = 'slack:' || jid
       WHERE jid GLOB ? AND jid NOT LIKE 'slack:%'
-    `).run('[CDG][A-Z0-9]*');
+    `,
+      )
+      .run('[CDG][A-Z0-9]*');
 
     // messages table (chat_jid column)
-    database.prepare(`
+    database
+      .prepare(
+        `
       UPDATE messages SET chat_jid = 'slack:' || chat_jid
       WHERE chat_jid GLOB ? AND chat_jid NOT LIKE 'slack:%'
-    `).run('[CDG][A-Z0-9]*');
+    `,
+      )
+      .run('[CDG][A-Z0-9]*');
 
     // router_state: last_agent_timestamp is a JSON object with JIDs as keys
-    const row = database.prepare(
-      `SELECT value FROM router_state WHERE key = 'last_agent_timestamp'`,
-    ).get() as { value: string } | undefined;
+    const row = database
+      .prepare(
+        `SELECT value FROM router_state WHERE key = 'last_agent_timestamp'`,
+      )
+      .get() as { value: string } | undefined;
     if (row?.value) {
       try {
         const timestamps = JSON.parse(row.value) as Record<string, string>;
@@ -215,9 +243,11 @@ function migrateSlackJidPrefix(database: Database.Database): void {
           }
         }
         if (changed) {
-          database.prepare(
-            `UPDATE router_state SET value = ? WHERE key = 'last_agent_timestamp'`,
-          ).run(JSON.stringify(updated));
+          database
+            .prepare(
+              `UPDATE router_state SET value = ? WHERE key = 'last_agent_timestamp'`,
+            )
+            .run(JSON.stringify(updated));
         }
       } catch {
         // Corrupt JSON — skip
@@ -225,10 +255,14 @@ function migrateSlackJidPrefix(database: Database.Database): void {
     }
 
     // scheduled_tasks table (chat_jid column)
-    database.prepare(`
+    database
+      .prepare(
+        `
       UPDATE scheduled_tasks SET chat_jid = 'slack:' || chat_jid
       WHERE chat_jid GLOB ? AND chat_jid NOT LIKE 'slack:%'
-    `).run('[CDG][A-Z0-9]*');
+    `,
+      )
+      .run('[CDG][A-Z0-9]*');
 
     database.exec('COMMIT');
     database.exec('PRAGMA foreign_keys = ON');
@@ -770,10 +804,20 @@ export function removeFromAllowlist(domain: string): void {
   db.prepare('DELETE FROM network_allowlist WHERE domain = ?').run(domain);
 }
 
-export function getAllAllowlisted(): Array<{ domain: string; approved_by: string; created_at: string }> {
+export function getAllAllowlisted(): Array<{
+  domain: string;
+  approved_by: string;
+  created_at: string;
+}> {
   return db
-    .prepare('SELECT domain, approved_by, created_at FROM network_allowlist ORDER BY created_at')
-    .all() as Array<{ domain: string; approved_by: string; created_at: string }>;
+    .prepare(
+      'SELECT domain, approved_by, created_at FROM network_allowlist ORDER BY created_at',
+    )
+    .all() as Array<{
+    domain: string;
+    approved_by: string;
+    created_at: string;
+  }>;
 }
 
 // --- JSON migration ---

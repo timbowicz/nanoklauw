@@ -24,7 +24,10 @@ describe('readIpcJsonFile security', () => {
   it('parses valid JSON from a regular file', () => {
     const dir = makeTempDir();
     const file = path.join(dir, 'message.json');
-    fs.writeFileSync(file, JSON.stringify({ type: 'message', chatJid: 'x@g.us', text: 'hi' }));
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ type: 'message', chatJid: 'x@g.us', text: 'hi' }),
+    );
 
     expect(readIpcJsonFile(file)).toEqual({
       type: 'message',
@@ -66,15 +69,15 @@ describe('readIpcJsonFile security', () => {
 
     const originalReadSync = fs.readSync.bind(fs);
     let grew = false;
-    const readSyncSpy = vi.spyOn(fs, 'readSync').mockImplementation(
-      ((...args: unknown[]): number => {
-        if (!grew) {
-          grew = true;
-          fs.appendFileSync(file, 'x'.repeat(1024 * 1024));
-        }
-        return originalReadSync(...(args as Parameters<typeof fs.readSync>));
-      }) as typeof fs.readSync,
-    );
+    const readSyncSpy = vi.spyOn(fs, 'readSync').mockImplementation(((
+      ...args: unknown[]
+    ): number => {
+      if (!grew) {
+        grew = true;
+        fs.appendFileSync(file, 'x'.repeat(1024 * 1024));
+      }
+      return originalReadSync(...(args as Parameters<typeof fs.readSync>));
+    }) as typeof fs.readSync);
 
     expect(() => readIpcJsonFile(file)).toThrow(/exceeds/i);
     readSyncSpy.mockRestore();

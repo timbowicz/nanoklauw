@@ -3,7 +3,9 @@ import { _initTestDatabase } from './db.js';
 import { isAllowlisted, addToAllowlist, getAllAllowlisted } from './db.js';
 
 describe('network allowlist', () => {
-  beforeEach(() => { _initTestDatabase(); });
+  beforeEach(() => {
+    _initTestDatabase();
+  });
 
   it('returns false for unknown domain', () => {
     expect(isAllowlisted('example.com')).toBe(false);

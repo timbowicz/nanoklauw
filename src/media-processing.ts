@@ -20,10 +20,14 @@ const JPEG_QUALITY = 85;
 /** Map MIME types to file extensions. Defaults to 'jpg' for unknown types. */
 function mimeToExt(mime: string): string {
   switch (mime) {
-    case 'image/png': return 'png';
-    case 'image/webp': return 'webp';
-    case 'image/gif': return 'gif';
-    default: return 'jpg';
+    case 'image/png':
+      return 'png';
+    case 'image/webp':
+      return 'webp';
+    case 'image/gif':
+      return 'gif';
+    default:
+      return 'jpg';
   }
 }
 
@@ -31,14 +35,37 @@ function mimeToExt(mime: string): string {
 function detectMimeFromBuffer(buffer: Buffer, declaredMime: string): string {
   if (buffer.length < 4) return declaredMime;
   // PNG: 89 50 4E 47
-  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return 'image/png';
+  if (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47
+  )
+    return 'image/png';
   // JPEG: FF D8 FF
-  if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return 'image/jpeg';
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff)
+    return 'image/jpeg';
   // GIF: 47 49 46 38
-  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) return 'image/gif';
+  if (
+    buffer[0] === 0x47 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x38
+  )
+    return 'image/gif';
   // WebP: 52 49 46 46 ... 57 45 42 50
-  if (buffer.length >= 12 && buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46
-      && buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) return 'image/webp';
+  if (
+    buffer.length >= 12 &&
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x45 &&
+    buffer[10] === 0x42 &&
+    buffer[11] === 0x50
+  )
+    return 'image/webp';
   return declaredMime;
 }
 
@@ -124,9 +151,15 @@ export async function downloadImage(
     const declaredMime = msg.message.imageMessage.mimetype || 'image/jpeg';
     const detectedMime = detectMimeFromBuffer(buffer, declaredMime);
     if (detectedMime !== declaredMime) {
-      logger.warn({ declaredMime, actualMime: detectedMime }, 'Image MIME mismatch, using detected type');
+      logger.warn(
+        { declaredMime, actualMime: detectedMime },
+        'Image MIME mismatch, using detected type',
+      );
     }
-    logger.info({ size: buffer.length, mimetype: detectedMime }, 'Downloaded image');
+    logger.info(
+      { size: buffer.length, mimetype: detectedMime },
+      'Downloaded image',
+    );
 
     // Resize to reduce API token usage
     const resized = await resizeImage(buffer, detectedMime);
@@ -172,7 +205,9 @@ export function writeImageFiles(
     try {
       fs.writeFileSync(filepath, Buffer.from(msg.image_data.data, 'base64'));
       // Ensure container (uid 1000) can read the file
-      try { fs.chownSync(filepath, 1000, 1000); } catch {}
+      try {
+        fs.chownSync(filepath, 1000, 1000);
+      } catch {}
       refs.push({ messageId: msg.id, filename });
     } catch (err) {
       logger.error({ err, messageId: msg.id }, 'Failed to write image file');
@@ -185,10 +220,7 @@ export function writeImageFiles(
 /**
  * Remove processed image files after the container exits.
  */
-export function cleanupImageFiles(
-  groupFolder: string,
-  refs: ImageRef[],
-): void {
+export function cleanupImageFiles(groupFolder: string, refs: ImageRef[]): void {
   const mediaDir = path.join(DATA_DIR, 'ipc', groupFolder, 'media');
 
   for (const ref of refs) {
@@ -228,7 +260,13 @@ const MAX_DOCUMENT_SIZE = 25 * 1024 * 1024;
 function detectDocumentMime(buffer: Buffer, declaredMime: string): string {
   if (buffer.length >= 4) {
     // PDF: %PDF
-    if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) return 'application/pdf';
+    if (
+      buffer[0] === 0x25 &&
+      buffer[1] === 0x50 &&
+      buffer[2] === 0x44 &&
+      buffer[3] === 0x46
+    )
+      return 'application/pdf';
   }
   return declaredMime;
 }
@@ -241,13 +279,19 @@ function documentMimeToExt(mime: string, filename?: string): string {
     if (ext && ext.length <= 10) return ext;
   }
   switch (mime) {
-    case 'application/pdf': return 'pdf';
-    case 'text/plain': return 'txt';
-    case 'application/json': return 'json';
-    case 'text/csv': return 'csv';
+    case 'application/pdf':
+      return 'pdf';
+    case 'text/plain':
+      return 'txt';
+    case 'application/json':
+      return 'json';
+    case 'text/csv':
+      return 'csv';
     case 'text/xml':
-    case 'application/xml': return 'xml';
-    default: return 'bin';
+    case 'application/xml':
+      return 'xml';
+    default:
+      return 'bin';
   }
 }
 
@@ -282,11 +326,17 @@ export async function downloadDocument(
       return null;
     }
 
-    const declaredMime = msg.message.documentMessage.mimetype || 'application/octet-stream';
+    const declaredMime =
+      msg.message.documentMessage.mimetype || 'application/octet-stream';
     const mimetype = detectDocumentMime(buffer, declaredMime);
-    const filename = msg.message.documentMessage.fileName || `document.${documentMimeToExt(mimetype)}`;
+    const filename =
+      msg.message.documentMessage.fileName ||
+      `document.${documentMimeToExt(mimetype)}`;
 
-    logger.info({ size: buffer.length, mimetype, filename }, 'Downloaded document');
+    logger.info(
+      { size: buffer.length, mimetype, filename },
+      'Downloaded document',
+    );
 
     return {
       type: 'document',
@@ -316,7 +366,10 @@ export function writeDocumentFiles(
   for (const msg of messages) {
     if (!msg.document_data) continue;
 
-    const ext = documentMimeToExt(msg.document_data.media_type, msg.document_data.filename);
+    const ext = documentMimeToExt(
+      msg.document_data.media_type,
+      msg.document_data.filename,
+    );
     const safeId = msg.id.replace(/[^a-zA-Z0-9._-]/g, '_');
     const filename = `doc_${safeId}.${ext}`;
     const filepath = path.join(mediaDir, filename);
@@ -332,8 +385,12 @@ export function writeDocumentFiles(
         }),
       );
       // Ensure container (uid 1000) can read the files
-      try { fs.chownSync(filepath, 1000, 1000); } catch {}
-      try { fs.chownSync(`${filepath}.meta.json`, 1000, 1000); } catch {}
+      try {
+        fs.chownSync(filepath, 1000, 1000);
+      } catch {}
+      try {
+        fs.chownSync(`${filepath}.meta.json`, 1000, 1000);
+      } catch {}
       refs.push({ messageId: msg.id, filename });
     } catch (err) {
       logger.error({ err, messageId: msg.id }, 'Failed to write document file');
@@ -353,8 +410,12 @@ export function cleanupDocumentFiles(
   const mediaDir = path.join(DATA_DIR, 'ipc', groupFolder, 'media');
 
   for (const ref of refs) {
-    try { fs.unlinkSync(path.join(mediaDir, ref.filename)); } catch {}
-    try { fs.unlinkSync(path.join(mediaDir, `${ref.filename}.meta.json`)); } catch {}
+    try {
+      fs.unlinkSync(path.join(mediaDir, ref.filename));
+    } catch {}
+    try {
+      fs.unlinkSync(path.join(mediaDir, `${ref.filename}.meta.json`));
+    } catch {}
   }
 }
 

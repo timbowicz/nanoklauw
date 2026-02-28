@@ -17,38 +17,39 @@ vi.mock('./db.js', () => ({
 }));
 
 // Must use vi.hoisted so these are available inside the hoisted vi.mock factory
-const {
-  mockToBuffer,
-  mockPng,
-  mockJpeg,
-  mockResize,
-  mockMetadata,
-  mockSharp,
-} = vi.hoisted(() => {
-  const mockToBuffer = vi.fn();
-  const mockPng = vi.fn();
-  const mockJpeg = vi.fn();
-  const mockResize = vi.fn();
-  const mockMetadata = vi.fn();
+const { mockToBuffer, mockPng, mockJpeg, mockResize, mockMetadata, mockSharp } =
+  vi.hoisted(() => {
+    const mockToBuffer = vi.fn();
+    const mockPng = vi.fn();
+    const mockJpeg = vi.fn();
+    const mockResize = vi.fn();
+    const mockMetadata = vi.fn();
 
-  function createChain() {
-    const chain = {
-      metadata: mockMetadata,
-      resize: mockResize,
-      png: mockPng,
-      jpeg: mockJpeg,
-      toBuffer: mockToBuffer,
+    function createChain() {
+      const chain = {
+        metadata: mockMetadata,
+        resize: mockResize,
+        png: mockPng,
+        jpeg: mockJpeg,
+        toBuffer: mockToBuffer,
+      };
+      mockResize.mockReturnValue(chain);
+      mockPng.mockReturnValue(chain);
+      mockJpeg.mockReturnValue(chain);
+      return chain;
+    }
+
+    const mockSharp = vi.fn(() => createChain());
+
+    return {
+      mockToBuffer,
+      mockPng,
+      mockJpeg,
+      mockResize,
+      mockMetadata,
+      mockSharp,
     };
-    mockResize.mockReturnValue(chain);
-    mockPng.mockReturnValue(chain);
-    mockJpeg.mockReturnValue(chain);
-    return chain;
-  }
-
-  const mockSharp = vi.fn(() => createChain());
-
-  return { mockToBuffer, mockPng, mockJpeg, mockResize, mockMetadata, mockSharp };
-});
+  });
 
 vi.mock('sharp', () => ({
   default: mockSharp,
@@ -65,7 +66,11 @@ describe('resizeImage', () => {
     const input = Buffer.from('fake-jpeg-data');
     const output = Buffer.from('resized-jpeg');
 
-    mockMetadata.mockResolvedValue({ width: 2048, height: 1536, hasAlpha: false });
+    mockMetadata.mockResolvedValue({
+      width: 2048,
+      height: 1536,
+      hasAlpha: false,
+    });
     mockToBuffer.mockResolvedValue(output);
 
     const result = await resizeImage(input, 'image/jpeg');
@@ -85,7 +90,11 @@ describe('resizeImage', () => {
     const input = Buffer.from('fake-png-data');
     const output = Buffer.from('resized-png');
 
-    mockMetadata.mockResolvedValue({ width: 2000, height: 1000, hasAlpha: true });
+    mockMetadata.mockResolvedValue({
+      width: 2000,
+      height: 1000,
+      hasAlpha: true,
+    });
     mockToBuffer.mockResolvedValue(output);
 
     const result = await resizeImage(input, 'image/png');
@@ -101,7 +110,11 @@ describe('resizeImage', () => {
     const input = Buffer.from('fake-png-no-alpha');
     const output = Buffer.from('converted-jpeg');
 
-    mockMetadata.mockResolvedValue({ width: 800, height: 600, hasAlpha: false });
+    mockMetadata.mockResolvedValue({
+      width: 800,
+      height: 600,
+      hasAlpha: false,
+    });
     mockToBuffer.mockResolvedValue(output);
 
     const result = await resizeImage(input, 'image/png');
@@ -115,7 +128,11 @@ describe('resizeImage', () => {
     const input = Buffer.from('small-image');
     const output = Buffer.from('same-size');
 
-    mockMetadata.mockResolvedValue({ width: 640, height: 480, hasAlpha: false });
+    mockMetadata.mockResolvedValue({
+      width: 640,
+      height: 480,
+      hasAlpha: false,
+    });
     mockToBuffer.mockResolvedValue(output);
 
     const result = await resizeImage(input, 'image/jpeg');
@@ -131,7 +148,11 @@ describe('resizeImage', () => {
     const input = Buffer.from('fake-webp');
     const output = Buffer.from('converted');
 
-    mockMetadata.mockResolvedValue({ width: 3000, height: 2000, hasAlpha: false });
+    mockMetadata.mockResolvedValue({
+      width: 3000,
+      height: 2000,
+      hasAlpha: false,
+    });
     mockToBuffer.mockResolvedValue(output);
 
     const result = await resizeImage(input, 'image/webp');

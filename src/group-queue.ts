@@ -219,7 +219,10 @@ export class GroupQueue {
           state.process.kill('SIGKILL');
         }
       }, 3000);
-      logger.info({ groupJid, containerName: state.containerName }, 'Abort requested for active group process');
+      logger.info(
+        { groupJid, containerName: state.containerName },
+        'Abort requested for active group process',
+      );
       return true;
     } catch (err) {
       logger.warn({ groupJid, err }, 'Failed to abort active group process');
@@ -263,7 +266,10 @@ export class GroupQueue {
       if (state.abortRequested) {
         state.retryCount = 0;
         state.abortRequested = false;
-        logger.info({ groupJid }, 'Group run aborted during processing, skipping retry');
+        logger.info(
+          { groupJid },
+          'Group run aborted during processing, skipping retry',
+        );
       } else {
         logger.error({ groupJid, err }, 'Error processing messages for group');
         this.scheduleRetry(groupJid, state);

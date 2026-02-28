@@ -53,10 +53,7 @@ export class ImageHandler {
   }
 
   /** Write image files to IPC for container access. */
-  prepareForContainer(
-    groupFolder: string,
-    messages: NewMessage[],
-  ): ImageRef[] {
+  prepareForContainer(groupFolder: string, messages: NewMessage[]): ImageRef[] {
     return writeImageFiles(groupFolder, messages);
   }
 

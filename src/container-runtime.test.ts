@@ -40,9 +40,10 @@ describe('readonlyMountArgs', () => {
 
 describe('stopContainerArgs', () => {
   it('returns stop args array', () => {
-    expect(stopContainerArgs('nanoclaw-test-123')).toEqual(
-      ['stop', 'nanoclaw-test-123'],
-    );
+    expect(stopContainerArgs('nanoclaw-test-123')).toEqual([
+      'stop',
+      'nanoclaw-test-123',
+    ]);
   });
 });
 
@@ -82,7 +83,9 @@ describe('ensureContainerRuntimeRunning', () => {
 describe('cleanupOrphans', () => {
   it('stops orphaned nanoclaw containers', () => {
     // docker ps returns container names, one per line
-    mockExecFileSync.mockReturnValueOnce('nanoclaw-group1-111\nnanoclaw-group2-222\n');
+    mockExecFileSync.mockReturnValueOnce(
+      'nanoclaw-group1-111\nnanoclaw-group2-222\n',
+    );
     // stop calls succeed
     mockExecFileSync.mockReturnValue('');
 

@@ -51,9 +51,9 @@ export interface ImageBlock {
 
 export interface DocumentBlock {
   type: 'document';
-  media_type: string;    // e.g. 'application/pdf', 'text/plain'
-  data: string;          // base64
-  filename: string;      // original filename from WhatsApp
+  media_type: string; // e.g. 'application/pdf', 'text/plain'
+  data: string; // base64
+  filename: string; // original filename from WhatsApp
 }
 
 export interface NewMessage {
@@ -112,7 +112,12 @@ export interface Channel {
   // Optional: send an image with optional caption.
   sendImage?(jid: string, image: Buffer, caption?: string): Promise<void>;
   // Optional: send a document/file with filename and optional caption.
-  sendDocument?(jid: string, document: Buffer, filename: string, caption?: string): Promise<void>;
+  sendDocument?(
+    jid: string,
+    document: Buffer,
+    filename: string,
+    caption?: string,
+  ): Promise<void>;
   // Optional: metadata sync (used by refresh_groups IPC task).
   syncGroupMetadata?(force?: boolean): Promise<void>;
   // Optional: send message and return its ID for reply correlation.
