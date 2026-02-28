@@ -1,4 +1,4 @@
-import { Channel, NewMessage, SendMessageOpts } from './types.js';
+import { Channel, NewMessage } from './types.js';
 
 export function escapeXml(s: string): string {
   if (!s) return '';
@@ -32,17 +32,6 @@ export function formatOutbound(rawText: string): string {
   const text = stripInternalTags(rawText);
   if (!text) return '';
   return text;
-}
-
-export function routeOutbound(
-  channels: Channel[],
-  jid: string,
-  text: string,
-  opts?: SendMessageOpts,
-): Promise<void> {
-  const channel = channels.find((c) => c.ownsJid(jid) && c.isConnected());
-  if (!channel) throw new Error(`No channel for JID: ${jid}`);
-  return channel.sendMessage(jid, text, opts);
 }
 
 export function findChannel(

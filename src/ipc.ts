@@ -100,6 +100,15 @@ export function createIpcDeps(cfg: {
   };
 }
 
+function getGroupName(
+  deps: IpcDeps,
+  folder: string,
+): string {
+  const groups = deps.registeredGroups();
+  const entry = Object.values(groups).find((g) => g.folder === folder);
+  return entry?.name || folder;
+}
+
 /** Check if a source group is authorized to access a target JID. */
 function canAccessJid(
   sourceGroup: string,
@@ -769,13 +778,7 @@ export async function processTaskIpc(
           {
             sendMessageWithId: deps.sendMessageWithId!,
             getMainChatJid: deps.getMainChatJid!,
-            getGroupName: (folder) => {
-              const groups = deps.registeredGroups();
-              const entry = Object.values(groups).find(
-                (g) => g.folder === folder,
-              );
-              return entry?.name || folder;
-            },
+            getGroupName: (folder) => getGroupName(deps, folder),
           },
         );
       }
@@ -791,13 +794,7 @@ export async function processTaskIpc(
           {
             sendMessageWithId: deps.sendMessageWithId!,
             getMainChatJid: deps.getMainChatJid!,
-            getGroupName: (folder) => {
-              const groups = deps.registeredGroups();
-              const entry = Object.values(groups).find(
-                (g) => g.folder === folder,
-              );
-              return entry?.name || folder;
-            },
+            getGroupName: (folder) => getGroupName(deps, folder),
           },
         );
       }
@@ -814,13 +811,7 @@ export async function processTaskIpc(
           {
             sendMessageWithId: deps.sendMessageWithId!,
             getMainChatJid: deps.getMainChatJid!,
-            getGroupName: (folder) => {
-              const groups = deps.registeredGroups();
-              const entry = Object.values(groups).find(
-                (g) => g.folder === folder,
-              );
-              return entry?.name || folder;
-            },
+            getGroupName: (folder) => getGroupName(deps, folder),
           },
         );
       }

@@ -43,6 +43,11 @@ export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
   10,
 ); // 10MB default
 export const IPC_POLL_INTERVAL = 1000;
+
+// Container user: the Dockerfile creates a 'node' user with uid/gid 1000.
+// Host directories mounted into containers must be owned by this uid.
+export const CONTAINER_UID = 1000;
+export const CONTAINER_GID = 1000;
 export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min default — how long to keep container alive after last result
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,

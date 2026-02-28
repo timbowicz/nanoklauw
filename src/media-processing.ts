@@ -9,7 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
 
-import { DATA_DIR } from './config.js';
+import { CONTAINER_GID, CONTAINER_UID, DATA_DIR } from './config.js';
 import { updateMessageContent } from './db.js';
 import { logger } from './logger.js';
 import { DocumentBlock, ImageBlock, NewMessage } from './types.js';
@@ -138,7 +138,7 @@ export async function downloadImage(
       'buffer',
       {},
       {
-        logger: console as any,
+        logger: logger as any,
         reuploadRequest: sock.updateMediaMessage,
       },
     )) as Buffer;
@@ -204,9 +204,9 @@ export function writeImageFiles(
 
     try {
       fs.writeFileSync(filepath, Buffer.from(msg.image_data.data, 'base64'));
-      // Ensure container (uid 1000) can read the file
+      // Ensure container user can read the file
       try {
-        fs.chownSync(filepath, 1000, 1000);
+        fs.chownSync(filepath, CONTAINER_UID, CONTAINER_GID);
       } catch {}
       refs.push({ messageId: msg.id, filename });
     } catch (err) {
@@ -311,7 +311,7 @@ export async function downloadDocument(
       'buffer',
       {},
       {
-        logger: console as any,
+        logger: logger as any,
         reuploadRequest: sock.updateMediaMessage,
       },
     )) as Buffer;
@@ -384,12 +384,12 @@ export function writeDocumentFiles(
           mimeType: msg.document_data.media_type,
         }),
       );
-      // Ensure container (uid 1000) can read the files
+      // Ensure container user can read the files
       try {
-        fs.chownSync(filepath, 1000, 1000);
+        fs.chownSync(filepath, CONTAINER_UID, CONTAINER_GID);
       } catch {}
       try {
-        fs.chownSync(`${filepath}.meta.json`, 1000, 1000);
+        fs.chownSync(`${filepath}.meta.json`, CONTAINER_UID, CONTAINER_GID);
       } catch {}
       refs.push({ messageId: msg.id, filename });
     } catch (err) {

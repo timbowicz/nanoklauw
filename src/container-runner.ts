@@ -12,6 +12,8 @@ import {
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_SECRETS,
   CONTAINER_TIMEOUT,
+  CONTAINER_GID,
+  CONTAINER_UID,
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
@@ -65,9 +67,9 @@ function setupSessionDirectory(groupFolder: string): string {
     '.claude',
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
-  // Ensure writable by container's node user (uid 1000)
+  // Ensure writable by container's node user
   try {
-    fs.chownSync(groupSessionsDir, 1000, 1000);
+    fs.chownSync(groupSessionsDir, CONTAINER_UID, CONTAINER_GID);
   } catch {}
 
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
@@ -115,7 +117,7 @@ function setupGroupIpcNamespace(groupFolder: string): string {
     const dir = path.join(groupIpcDir, sub);
     fs.mkdirSync(dir, { recursive: true });
     try {
-      fs.chownSync(dir, 1000, 1000);
+      fs.chownSync(dir, CONTAINER_UID, CONTAINER_GID);
     } catch {}
   }
   return groupIpcDir;
@@ -216,7 +218,7 @@ function buildVolumeMounts(
     const bwCacheDir = path.join(DATA_DIR, 'bitwarden', group.folder);
     fs.mkdirSync(bwCacheDir, { recursive: true });
     try {
-      fs.chownSync(bwCacheDir, 1000, 1000);
+      fs.chownSync(bwCacheDir, CONTAINER_UID, CONTAINER_GID);
     } catch {}
     mounts.push({
       hostPath: bwCacheDir,
@@ -301,7 +303,7 @@ function buildContainerArgs(
   // or when getuid is unavailable (native Windows without WSL).
   const hostUid = process.getuid?.();
   const hostGid = process.getgid?.();
-  if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
+  if (hostUid != null && hostUid !== 0 && hostUid !== CONTAINER_UID) {
     args.push('--user', `${hostUid}:${hostGid}`);
     args.push('-e', 'HOME=/home/node');
   }
