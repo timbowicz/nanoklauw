@@ -723,11 +723,29 @@ async function main(): Promise<void> {
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
+  let sessionRetried = false; // Track whether we already retried without session
   try {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'}, images: ${currentImages?.length || 0}, documents: ${currentDocuments?.length || 0})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, currentImages, currentDocuments);
+      let queryResult;
+      try {
+        queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, currentImages, currentDocuments);
+      } catch (queryErr) {
+        // If we were resuming a session and it failed, retry with a fresh session.
+        // This handles corrupt sessions that cause error_during_execution on every resume.
+        if (sessionId && !sessionRetried) {
+          const errMsg = queryErr instanceof Error ? queryErr.message : String(queryErr);
+          log(`Session resume failed (${errMsg}), retrying with fresh session`);
+          sessionId = undefined;
+          resumeAt = undefined;
+          sessionRetried = true;
+          continue;
+        }
+        throw queryErr; // Not a session issue or already retried, propagate
+      }
+      sessionRetried = false; // Successful query, reset retry flag
+
       currentImages = undefined; // Images consumed
       currentDocuments = undefined; // Documents consumed
       if (queryResult.newSessionId) {
