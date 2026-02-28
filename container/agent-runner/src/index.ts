@@ -670,8 +670,9 @@ async function main(): Promise<void> {
   try {
     const stdinData = await readStdin();
     containerInput = JSON.parse(stdinData);
-    // Delete the temp file the entrypoint wrote — it contains secrets
-    try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
+    // Legacy cleanup: older entrypoints wrote secrets to /tmp/input.json.
+    // Current entrypoint pipes via stdin (no temp file), but clean up just in case.
+    try { fs.unlinkSync('/tmp/input.json'); } catch { /* expected: file doesn't exist */ }
     log(`Received input for group: ${containerInput.groupFolder}`);
   } catch (err) {
     writeOutput({

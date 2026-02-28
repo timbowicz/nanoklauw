@@ -289,6 +289,8 @@ function buildContainerArgs(
     '256',
     '--security-opt',
     'no-new-privileges:true',
+    '--cap-drop',
+    'ALL',
   ];
 
   // Pass host timezone so container's local time matches the user's

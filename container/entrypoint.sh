@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
 
-# Save stdin immediately — later commands (e.g. bw) can consume stdin
-cat > /tmp/input.json
-chmod 600 /tmp/input.json
+# Read stdin into memory — never write secrets to disk.
+# The JSON contains secrets (API keys) that the Node process needs.
+INPUT=$(cat)
 
 cd /app && npx tsc --outDir /tmp/dist 2>&1 >&2
 ln -s /app/node_modules /tmp/dist/node_modules
@@ -13,9 +13,9 @@ chmod -R a-w /tmp/dist
 # BW_ENABLED is set as a Docker env var; actual credentials come from stdin JSON
 # All bw commands use </dev/null to avoid consuming stdin and || true to avoid set -e exits
 if [ "$BW_ENABLED" = "1" ]; then
-  BW_CLIENTID=$(jq -r '.secrets.BW_CLIENTID // empty' /tmp/input.json)
-  BW_CLIENTSECRET=$(jq -r '.secrets.BW_CLIENTSECRET // empty' /tmp/input.json)
-  BW_PASSWORD=$(jq -r '.secrets.BW_PASSWORD // empty' /tmp/input.json)
+  BW_CLIENTID=$(printf '%s' "$INPUT" | jq -r '.secrets.BW_CLIENTID // empty')
+  BW_CLIENTSECRET=$(printf '%s' "$INPUT" | jq -r '.secrets.BW_CLIENTSECRET // empty')
+  BW_PASSWORD=$(printf '%s' "$INPUT" | jq -r '.secrets.BW_PASSWORD // empty')
   export BW_CLIENTID BW_CLIENTSECRET BW_PASSWORD
 
   if [ -n "$BW_CLIENTID" ]; then
@@ -30,4 +30,6 @@ if [ "$BW_ENABLED" = "1" ]; then
   fi
 fi
 
-node /tmp/dist/index.js < /tmp/input.json
+# Pipe input to node via stdin. exec replaces the shell process.
+# Secrets are held only in memory (bash variable + node sdkEnv), never on disk.
+printf '%s' "$INPUT" | exec node /tmp/dist/index.js

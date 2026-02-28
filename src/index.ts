@@ -74,6 +74,28 @@ let messageLoopRunning = false;
 
 const imageHandler = new ImageHandler();
 const documentHandler = new DocumentHandler();
+
+// Per-group rate limiting: max triggers per window to prevent message flooding
+// from exhausting container slots. Does not affect agent autonomy — only limits
+// how often external messages can trigger new agent invocations.
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+const RATE_LIMIT_MAX_TRIGGERS = 5; // max 5 triggers per group per minute
+const groupTriggerTimestamps = new Map<string, number[]>();
+
+function isRateLimited(chatJid: string): boolean {
+  const now = Date.now();
+  const timestamps = groupTriggerTimestamps.get(chatJid) || [];
+  // Prune old timestamps outside the window
+  const recent = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+  groupTriggerTimestamps.set(chatJid, recent);
+  return recent.length >= RATE_LIMIT_MAX_TRIGGERS;
+}
+
+function recordTrigger(chatJid: string): void {
+  const timestamps = groupTriggerTimestamps.get(chatJid) || [];
+  timestamps.push(Date.now());
+  groupTriggerTimestamps.set(chatJid, timestamps);
+}
 let channels: Channel[] = [];
 const queue = new GroupQueue();
 
@@ -452,6 +474,17 @@ async function startMessageLoop(): Promise<void> {
             );
             if (!hasTrigger) continue;
           }
+
+          // Rate limit: prevent message flooding from exhausting container slots.
+          // Main group is exempt — it's the admin channel.
+          if (!isMainGroup && isRateLimited(chatJid)) {
+            logger.warn(
+              { chatJid, group: group.name },
+              'Rate limited — too many triggers in window, skipping',
+            );
+            continue;
+          }
+          recordTrigger(chatJid);
 
           // Pull all messages since lastAgentTimestamp so non-trigger
           // context that accumulated between triggers is included.
