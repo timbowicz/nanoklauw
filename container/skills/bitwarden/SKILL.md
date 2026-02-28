@@ -16,11 +16,20 @@ bw status | grep -q '"status":"unlocked"' && echo "READY" || echo "NOT AVAILABLE
 
 If not available, Bitwarden is not enabled for this group. Do not attempt to login manually.
 
+## Group Isolation
+
+All vault items are isolated by group using a folder prefix convention. Your group prefix is `$NANOCLAW_GROUP_FOLDER`.
+
+- ALWAYS prefix item names with your group folder: `$NANOCLAW_GROUP_FOLDER/Service Name`
+- NEVER search for or access items that don't start with your group prefix
+- This ensures each group's credentials are isolated from other groups
+
 ## Look up credentials
 
 ```bash
-# Search by name or URL
-bw list items --search "example.com" --session "$BW_SESSION"
+# Search by name — always filter by group prefix
+GROUP_PREFIX="$NANOCLAW_GROUP_FOLDER"
+bw list items --search "$GROUP_PREFIX/" --session "$BW_SESSION" | jq '[.[] | select(.name | startswith("'"$GROUP_PREFIX"'/"))]'
 
 # Get specific fields
 bw get username <item-id> --session "$BW_SESSION"
@@ -33,7 +42,8 @@ bw get uri <item-id> --session "$BW_SESSION"
 
 1. Look up credentials:
    ```bash
-   ITEM=$(bw list items --search "example.com" --session "$BW_SESSION" | jq '.[0]')
+   GROUP_PREFIX="$NANOCLAW_GROUP_FOLDER"
+   ITEM=$(bw list items --search "$GROUP_PREFIX/example.com" --session "$BW_SESSION" | jq '[.[] | select(.name | startswith("'"$GROUP_PREFIX"'/"))] | .[0]')
    USERNAME=$(echo "$ITEM" | jq -r '.login.username')
    PASSWORD=$(bw get password "$(echo "$ITEM" | jq -r '.id')" --session "$BW_SESSION")
    ```
@@ -57,9 +67,10 @@ bw get uri <item-id> --session "$BW_SESSION"
 ## Create new credentials
 
 ```bash
-# Create a login item
+# Create a login item — always prefix the name with your group folder
+GROUP_PREFIX="$NANOCLAW_GROUP_FOLDER"
 bw get template item | jq \
-  --arg name "New Service" \
+  --arg name "$GROUP_PREFIX/New Service" \
   --arg user "user@example.com" \
   --arg pass "generated-password" \
   --arg uri "https://newservice.com" \
@@ -91,6 +102,9 @@ bw sync --session "$BW_SESSION"
 ## Important
 
 - Always pass `--session "$BW_SESSION"` to every `bw` command
+- ALWAYS prefix item names with your group folder: `$NANOCLAW_GROUP_FOLDER/Service Name`
+- NEVER search for or access items that don't start with your group prefix
+- This ensures each group's credentials are isolated from other groups
 - Never log or display passwords in output — use them directly in agent-browser fill commands
 - After creating or updating items, run `bw sync` to push changes
 - Passwords from `bw get password` are raw strings (no JSON wrapping)
