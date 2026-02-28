@@ -309,15 +309,11 @@ function buildContainerArgs(
   args.push('-e', 'DISABLE_ERROR_REPORTING=1');
   args.push('-e', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1');
 
-  // Bitwarden credentials for entrypoint login/unlock
+  // Bitwarden credentials are passed via stdin JSON (input.secrets) alongside
+  // other secrets — NOT as Docker env vars (which are visible via docker inspect).
+  // The container entrypoint extracts them from /tmp/input.json before bw login.
   if (bitwarden) {
-    const secrets = readSecrets();
-    if (secrets.BW_CLIENTID)
-      args.push('-e', `BW_CLIENTID=${secrets.BW_CLIENTID}`);
-    if (secrets.BW_CLIENTSECRET)
-      args.push('-e', `BW_CLIENTSECRET=${secrets.BW_CLIENTSECRET}`);
-    if (secrets.BW_PASSWORD)
-      args.push('-e', `BW_PASSWORD=${secrets.BW_PASSWORD}`);
+    args.push('-e', 'BW_ENABLED=1');
   }
 
   // Network isolation: non-main containers default to restricted network

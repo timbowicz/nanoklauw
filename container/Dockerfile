@@ -56,10 +56,11 @@ RUN npm run build
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input /workspace/ipc/media
 
-# Create entrypoint script
+# Copy entrypoint script
 # Secrets are passed via stdin JSON — temp file is deleted immediately after Node reads it
+# Bitwarden credentials are extracted from stdin JSON via jq (not Docker env vars)
 # Follow-up messages arrive via IPC files in /workspace/ipc/input/
-RUN printf '#!/bin/bash\nset -e\n\n# Save stdin immediately — later commands (e.g. bw) can consume stdin\ncat > /tmp/input.json\n\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\nln -s /app/node_modules /tmp/dist/node_modules\nchmod -R a-w /tmp/dist\n\n# Bitwarden: login and unlock if credentials are present (non-fatal)\n# All bw commands use </dev/null to avoid consuming stdin and || true to avoid set -e exits\nif [ -n "$BW_CLIENTID" ]; then\n  bw config server ${BW_SERVER:-https://vault.bitwarden.eu} </dev/null 2>/dev/null || true\n  if bw login --apikey </dev/null 2>/dev/null; then\n    BW_SESSION=$(bw unlock --passwordenv BW_PASSWORD --raw </dev/null 2>/dev/null) && export BW_SESSION && bw sync </dev/null 2>/dev/null || echo "Warning: Bitwarden unlock failed" >&2\n  else\n    echo "Warning: Bitwarden login failed" >&2\n  fi\nfi\n\nnode /tmp/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+COPY entrypoint.sh /app/entrypoint.sh
 
 # Install Tribe CRM MCP server (cloned on host, copied into image)
 COPY tribe-mcp/ /opt/tribe-mcp/
