@@ -522,12 +522,22 @@ export function getMessageFromMe(messageId: string, chatJid: string): boolean {
   return row?.is_from_me === 1;
 }
 
-export function getLatestMessage(chatJid: string): { id: string; fromMe: boolean } | undefined {
+export function getMessageKeyInfo(messageId: string, chatJid: string): { fromMe: boolean; sender?: string } {
   const row = db
-    .prepare(`SELECT id, is_from_me FROM messages WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT 1`)
-    .get(chatJid) as { id: string; is_from_me: number | null } | undefined;
+    .prepare(`SELECT is_from_me, sender FROM messages WHERE id = ? AND chat_jid = ? LIMIT 1`)
+    .get(messageId, chatJid) as { is_from_me: number | null; sender: string | null } | undefined;
+  return {
+    fromMe: row?.is_from_me === 1,
+    sender: row?.sender || undefined,
+  };
+}
+
+export function getLatestMessage(chatJid: string): { id: string; fromMe: boolean; sender?: string } | undefined {
+  const row = db
+    .prepare(`SELECT id, is_from_me, sender FROM messages WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT 1`)
+    .get(chatJid) as { id: string; is_from_me: number | null; sender: string | null } | undefined;
   if (!row) return undefined;
-  return { id: row.id, fromMe: row.is_from_me === 1 };
+  return { id: row.id, fromMe: row.is_from_me === 1, sender: row.sender || undefined };
 }
 
 export function storeReaction(reaction: Reaction): void {

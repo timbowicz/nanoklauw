@@ -11,7 +11,7 @@ import {
   TIMEZONE,
 } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getMessageFromMe, getTaskById, updateTask } from './db.js';
+import { createTask, deleteTask, getMessageKeyInfo, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { Channel, RegisteredGroup, SendMessageOpts } from './types.js';
@@ -91,7 +91,8 @@ export function createIpcDeps(cfg: {
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       if (messageId) {
         if (!channel.sendReaction) throw new Error('Channel does not support sendReaction');
-        const messageKey = { id: messageId, remoteJid: jid, fromMe: getMessageFromMe(messageId, jid) };
+        const keyInfo = getMessageKeyInfo(messageId, jid);
+        const messageKey = { id: messageId, remoteJid: jid, fromMe: keyInfo.fromMe, participant: keyInfo.sender };
         await channel.sendReaction(jid, messageKey, emoji);
       } else {
         if (!channel.reactToLatestMessage) throw new Error('Channel does not support reactions');

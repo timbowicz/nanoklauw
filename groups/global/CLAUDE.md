@@ -30,7 +30,7 @@ You also have `mcp__nanoclaw__send_message` which sends a message immediately wh
 
 ### Reactions
 
-Use `mcp__nanoclaw__react_to_message` to react to messages with emoji. Always react with 👀 at the start of processing a message to show you've seen it. Use ✅ when done if the task was a request. Omit `message_id` to react to the latest message.
+Use `mcp__nanoclaw__react_to_message` to react to messages with emoji. The host automatically handles 👀 (seen) and ✅ (done) — do NOT send those yourself. Instead, always react with ☁️ when you start working on a message so the user knows you're thinking. Omit `message_id` to react to the latest message.
 
 ### Internal thoughts
 

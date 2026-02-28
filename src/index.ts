@@ -259,6 +259,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     'Processing messages',
   );
 
+  // Send 👀 reaction to the last user message so they know we've seen it.
+  // This happens before the container starts, so the user gets instant feedback.
+  const lastMsg = missedMessages[missedMessages.length - 1];
+  const reactionMessageKey = lastMsg
+    ? { id: lastMsg.id, remoteJid: chatJid, fromMe: false, participant: lastMsg.sender }
+    : undefined;
+  if (reactionMessageKey && channel.sendReaction) {
+    channel.sendReaction(chatJid, reactionMessageKey, '👀').catch((err) =>
+      logger.warn({ chatJid, err }, 'Failed to send 👀 reaction'),
+    );
+  }
+
   // Track idle timer for closing stdin when agent is idle
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -327,6 +339,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
   if (documentRefs.length > 0) {
     documentHandler.cleanup(group.folder, documentRefs);
+  }
+
+  // Send completion reaction: ✅ on success, remove on error
+  if (reactionMessageKey && channel.sendReaction) {
+    const completionEmoji = (output === 'error' || hadError) ? '❌' : '✅';
+    channel.sendReaction(chatJid, reactionMessageKey, completionEmoji).catch((err) =>
+      logger.warn({ chatJid, err }, 'Failed to send completion reaction'),
+    );
   }
 
   if (output === 'error' || hadError) {

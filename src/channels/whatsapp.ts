@@ -534,6 +534,7 @@ export class WhatsAppChannel implements Channel {
       id: latest.id,
       remoteJid: chatJid,
       fromMe: latest.fromMe,
+      participant: latest.sender,
     };
     await this.sendReaction(chatJid, messageKey, emoji);
   }
