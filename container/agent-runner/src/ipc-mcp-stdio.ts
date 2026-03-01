@@ -311,14 +311,15 @@ server.tool(
   'generate_image',
   `Generate a NEW image from a text prompt and send it to the chat.
 
-MODEL SELECTION (cost per image):
-• imagen-4.0-fast-generate-001: Fast Imagen model, good for most requests (~$0.02/image)
-• imagen-4.0-generate-001: Higher quality Imagen, better text rendering (~$0.04/image)
-• gemini-2.5-flash-image: Gemini model — good at creative/artistic generation, follows complex prompts well
-• gemini-3-pro-image-preview: Best quality Gemini model — excellent for detailed, high-quality images
+MODEL SELECTION:
+• gemini-3.1-flash-image-preview: DEFAULT — fast, high quality, 4K support, thinking mode, search grounding (~$0.05-0.07/image at 1024px)
+• gemini-3-pro-image-preview: Highest quality, use when flash result isn't good enough (~$0.13-0.24/image)
+• imagen-4.0-fast-generate-001: Legacy Imagen, fast and cheap (~$0.02/image)
+• imagen-4.0-generate-001: Legacy Imagen, higher quality (~$0.04/image)
 
-Default to "imagen-4.0-fast-generate-001" for simple requests.
-Use Gemini models when the user wants creative/artistic output or the Imagen result wasn't satisfactory.
+Default to "gemini-3.1-flash-image-preview" for all requests.
+Fall back to "gemini-3-pro-image-preview" if the user wants maximum quality.
+Use Imagen models only if specifically requested.
 
 IMPORTANT:
 • The prompt must be in English. Translate if needed.
@@ -326,9 +327,9 @@ IMPORTANT:
 • The generated image is automatically sent to the current chat.`,
   {
     prompt: z.string().describe('English description of the image to generate. Be descriptive for best results.'),
-    model: z.enum(['imagen-4.0-generate-001', 'imagen-4.0-fast-generate-001', 'gemini-2.5-flash-image', 'gemini-3-pro-image-preview'])
-      .default('imagen-4.0-fast-generate-001')
-      .describe('Model to use for generation. Imagen models are fast/cheap, Gemini models handle creative prompts better.'),
+    model: z.enum(['gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview', 'imagen-4.0-fast-generate-001', 'imagen-4.0-generate-001'])
+      .default('gemini-3.1-flash-image-preview')
+      .describe('Model to use. gemini-3.1-flash-image-preview is the default (fast, high quality). gemini-3-pro-image-preview for max quality.'),
     caption: z.string().optional().describe('Optional caption to send with the image'),
   },
   async (args) => {
@@ -426,9 +427,9 @@ The input image must exist on disk (e.g., received media in /workspace/ipc/media
   {
     prompt: z.string().describe('English editing instruction describing what to change (e.g., "Change the wall color to light blue and add modern furniture")'),
     image_path: z.string().describe('Absolute path to the input image file (e.g., /workspace/ipc/media/abc123.jpg)'),
-    model: z.enum(['gemini-2.5-flash-image', 'gemini-3-pro-image-preview'])
-      .default('gemini-2.5-flash-image')
-      .describe('Gemini model for image editing. gemini-2.5-flash-image is fast and cheap, gemini-3-pro-image-preview is higher quality.'),
+    model: z.enum(['gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview', 'gemini-2.5-flash-image'])
+      .default('gemini-3.1-flash-image-preview')
+      .describe('Gemini model for image editing. gemini-3.1-flash-image-preview is the default (fast, high quality). gemini-3-pro-image-preview for max quality.'),
     caption: z.string().optional().describe('Optional caption to send with the edited image'),
   },
   async (args) => {
