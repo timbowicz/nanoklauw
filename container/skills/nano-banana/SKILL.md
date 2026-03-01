@@ -20,10 +20,18 @@ You have MCP tools for image generation, editing, and sending:
 
 | Parameter | Default | Notes |
 |-----------|---------|-------|
-| `prompt` | (required) | English only, max 480 tokens. Be descriptive. |
-| `model` | `fast` | `fast` $0.02, `standard` $0.04, `ultra` $0.06 |
-| `aspect_ratio` | `1:1` | `1:1`, `3:4`, `4:3`, `9:16`, `16:9` |
-| `number_of_images` | `1` | 1-4 per call |
+| `prompt` | (required) | English only. Be descriptive. |
+| `model` | `imagen-4.0-fast-generate-001` | See model table below |
+| `caption` | (optional) | Caption to send with the image |
+
+### Generation Models
+
+| Model | Type | Best for |
+|-------|------|----------|
+| `imagen-4.0-fast-generate-001` | Imagen | Fast, cheap (~$0.02). Default for most requests. |
+| `imagen-4.0-generate-001` | Imagen | Higher quality, better text rendering (~$0.04). |
+| `gemini-2.5-flash-image` | Gemini | Creative/artistic generation, complex prompts. |
+| `gemini-3-pro-image-preview` | Gemini | Best quality, detailed images. |
 
 ## edit_image
 
@@ -47,9 +55,9 @@ Edit/transform an existing image using AI. Use when a user sends a photo and wan
 
 ## Model Selection
 
-- **Default to `fast`** for all requests ($0.02/image)
-- Use `standard` when user says "high quality", "detailed", or "better" ($0.04)
-- Use `ultra` only when user explicitly asks for "best quality", "ultra", or "maximum quality" ($0.06)
+- **Default to `imagen-4.0-fast-generate-001`** for most requests ($0.02/image)
+- Use `imagen-4.0-generate-001` when user says "high quality" or needs better text rendering ($0.04)
+- Use `gemini-2.5-flash-image` or `gemini-3-pro-image-preview` for creative/artistic requests, or when Imagen results weren't satisfactory
 
 ## Aspect Ratio Selection
 

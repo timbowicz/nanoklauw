@@ -309,23 +309,26 @@ Use available_groups.json to find the JID for a group. The folder name should be
 
 server.tool(
   'generate_image',
-  `Generate an image using Google's Imagen API and send it to the chat.
+  `Generate a NEW image from a text prompt and send it to the chat.
 
 MODEL SELECTION (cost per image):
-• imagen-4.0-fast-generate-001: Fast, good for most requests (~$0.02/image)
-• imagen-4.0-generate-001: Higher quality, better text rendering (~$0.04/image)
+• imagen-4.0-fast-generate-001: Fast Imagen model, good for most requests (~$0.02/image)
+• imagen-4.0-generate-001: Higher quality Imagen, better text rendering (~$0.04/image)
+• gemini-2.5-flash-image: Gemini model — good at creative/artistic generation, follows complex prompts well
+• gemini-3-pro-image-preview: Best quality Gemini model — excellent for detailed, high-quality images
 
-Default to "imagen-4.0-fast-generate-001" unless the user explicitly asks for high quality or "best quality".
+Default to "imagen-4.0-fast-generate-001" for simple requests.
+Use Gemini models when the user wants creative/artistic output or the Imagen result wasn't satisfactory.
 
 IMPORTANT:
 • The prompt must be in English. Translate if needed.
-• Be descriptive — Imagen works best with detailed prompts.
+• Be descriptive — detailed prompts produce better results.
 • The generated image is automatically sent to the current chat.`,
   {
     prompt: z.string().describe('English description of the image to generate. Be descriptive for best results.'),
-    model: z.enum(['imagen-4.0-generate-001', 'imagen-4.0-fast-generate-001'])
+    model: z.enum(['imagen-4.0-generate-001', 'imagen-4.0-fast-generate-001', 'gemini-2.5-flash-image', 'gemini-3-pro-image-preview'])
       .default('imagen-4.0-fast-generate-001')
-      .describe('Imagen model to use'),
+      .describe('Model to use for generation. Imagen models are fast/cheap, Gemini models handle creative prompts better.'),
     caption: z.string().optional().describe('Optional caption to send with the image'),
   },
   async (args) => {
@@ -339,23 +342,48 @@ IMPORTANT:
 
     try {
       const genai = new GoogleGenAI({ apiKey });
-      const response = await genai.models.generateImages({
-        model: args.model,
-        prompt: args.prompt,
-        config: { numberOfImages: 1 },
-      });
+      const isGemini = args.model.startsWith('gemini-');
+      let imageBuffer: Buffer;
 
-      const image = response.generatedImages?.[0];
-      if (!image?.image?.imageBytes) {
-        return {
-          content: [{ type: 'text' as const, text: 'Image generation returned no results. The prompt may have been blocked by safety filters. Try rephrasing.' }],
-          isError: true,
-        };
+      if (isGemini) {
+        // Gemini models use generateContent with responseModalities
+        const response = await genai.models.generateContent({
+          model: args.model,
+          contents: [{ role: 'user', parts: [{ text: args.prompt }] }],
+          config: { responseModalities: ['TEXT', 'IMAGE'] },
+        });
+
+        const parts = response.candidates?.[0]?.content?.parts;
+        const imagePart = parts?.find((p: { inlineData?: { mimeType?: string; data?: string } }) => p.inlineData?.mimeType?.startsWith('image/'));
+        if (!imagePart?.inlineData?.data) {
+          const textPart = parts?.find((p: { text?: string }) => p.text);
+          const textMsg = textPart?.text || 'No image in response';
+          return {
+            content: [{ type: 'text' as const, text: `Image generation did not produce an image. Model response: ${textMsg}` }],
+            isError: true,
+          };
+        }
+        imageBuffer = Buffer.from(imagePart.inlineData.data, 'base64');
+      } else {
+        // Imagen models use generateImages
+        const response = await genai.models.generateImages({
+          model: args.model,
+          prompt: args.prompt,
+          config: { numberOfImages: 1 },
+        });
+
+        const image = response.generatedImages?.[0];
+        if (!image?.image?.imageBytes) {
+          return {
+            content: [{ type: 'text' as const, text: 'Image generation returned no results. The prompt may have been blocked by safety filters. Try rephrasing.' }],
+            isError: true,
+          };
+        }
+        imageBuffer = Buffer.from(image.image.imageBytes, 'base64');
       }
 
       // Write image to media directory for host-side IPC pickup
       fs.mkdirSync(MEDIA_DIR, { recursive: true });
-      const imageBuffer = Buffer.from(image.image.imageBytes, 'base64');
       const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`;
       const imagePath = path.join(MEDIA_DIR, filename);
       fs.writeFileSync(imagePath, imageBuffer);
