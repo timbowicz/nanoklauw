@@ -586,6 +586,7 @@ async function runQuery(
   for await (const message of query({
     prompt: stream,
     options: {
+      model: sdkEnv.CLAUDE_MODEL || undefined,
       cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
@@ -697,6 +698,10 @@ async function main(): Promise<void> {
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
   for (const [key, value] of Object.entries(containerInput.secrets || {})) {
     sdkEnv[key] = value;
+  }
+  // Ensure ANTHROPIC_MODEL is set so CLI subprocesses also use the right model
+  if (sdkEnv.CLAUDE_MODEL) {
+    sdkEnv.ANTHROPIC_MODEL = sdkEnv.CLAUDE_MODEL;
   }
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));

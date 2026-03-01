@@ -72,6 +72,7 @@ export const TIMEZONE =
 export const CONTAINER_SECRETS = [
   'CLAUDE_CODE_OAUTH_TOKEN',
   'ANTHROPIC_API_KEY',
+  'CLAUDE_MODEL',
   'GEMINI_API_KEY',
   'HA_URL',
   'HA_TOKEN',
