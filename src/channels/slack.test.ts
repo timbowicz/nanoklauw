@@ -67,6 +67,11 @@ vi.mock('@slack/bolt', () => ({
         add: vi.fn().mockResolvedValue(undefined),
         remove: vi.fn().mockResolvedValue(undefined),
       },
+      assistant: {
+        threads: {
+          setStatus: vi.fn().mockResolvedValue(undefined),
+        },
+      },
     };
 
     constructor(opts: any) {
@@ -1163,84 +1168,177 @@ describe('SlackChannel', () => {
     });
   });
 
-  // --- setTyping (hourglass) ---
+  // --- setTyping (shimmer via Agents & Assistants API) ---
 
   describe('setTyping', () => {
-    it('adds hourglass reaction when typing starts', async () => {
+    it('calls assistant.threads.setStatus with status when user message exists', async () => {
       const opts = createTestOpts();
       const channel = new SlackChannel(opts);
       await channel.connect();
 
-      // Trigger a mention to set lastTriggerTs
+      // Deliver a user message to track its timestamp
       await triggerMessageEvent(
         createMessageEvent({
-          text: '<@U_BOT_123> help',
+          text: 'Hello',
           ts: '1704067200.000000',
+          user: 'U_USER_456',
         }),
       );
 
       await channel.setTyping('slack:C0123456789', true);
 
-      expect(currentApp().client.reactions.add).toHaveBeenCalledWith({
-        channel: 'C0123456789',
-        timestamp: '1704067200.000000',
-        name: 'hourglass_flowing_sand',
+      expect(
+        currentApp().client.assistant.threads.setStatus,
+      ).toHaveBeenCalledWith({
+        channel_id: 'C0123456789',
+        thread_ts: '1704067200.000000',
+        status: 'is thinking...',
       });
     });
 
-    it('removes hourglass reaction when typing stops', async () => {
+    it('clears status when isTyping is false', async () => {
       const opts = createTestOpts();
       const channel = new SlackChannel(opts);
       await channel.connect();
 
-      // Trigger a mention to set lastTriggerTs
       await triggerMessageEvent(
         createMessageEvent({
-          text: '<@U_BOT_123> help',
+          text: 'Hello',
           ts: '1704067200.000000',
+          user: 'U_USER_456',
         }),
       );
+
+      // Pin the thread via setTyping(true)
+      await channel.setTyping('slack:C0123456789', true);
 
       await channel.setTyping('slack:C0123456789', false);
 
-      expect(currentApp().client.reactions.remove).toHaveBeenCalledWith({
-        channel: 'C0123456789',
-        timestamp: '1704067200.000000',
-        name: 'hourglass_flowing_sand',
+      expect(
+        currentApp().client.assistant.threads.setStatus,
+      ).toHaveBeenLastCalledWith({
+        channel_id: 'C0123456789',
+        thread_ts: '1704067200.000000',
+        status: '',
       });
     });
 
-    it('does nothing when no trigger ts exists', async () => {
+    it('no-ops when no user message received', async () => {
       const opts = createTestOpts();
       const channel = new SlackChannel(opts);
       await channel.connect();
 
-      // No mention, so no lastTriggerTs
+      // No messages delivered — no user message ts to target
       await channel.setTyping('slack:C0123456789', true);
 
-      expect(currentApp().client.reactions.add).not.toHaveBeenCalled();
+      expect(
+        currentApp().client.assistant.threads.setStatus,
+      ).not.toHaveBeenCalled();
     });
 
-    it('handles reaction errors gracefully', async () => {
+    it('silently ignores API errors', async () => {
       const opts = createTestOpts();
       const channel = new SlackChannel(opts);
       await channel.connect();
 
       await triggerMessageEvent(
         createMessageEvent({
-          text: '<@U_BOT_123> help',
+          text: 'Hello',
           ts: '1704067200.000000',
+          user: 'U_USER_456',
         }),
       );
 
-      currentApp().client.reactions.add.mockRejectedValueOnce(
-        new Error('already_reacted'),
+      currentApp().client.assistant.threads.setStatus.mockRejectedValueOnce(
+        new Error('missing_scope'),
       );
 
       // Should not throw
       await expect(
         channel.setTyping('slack:C0123456789', true),
       ).resolves.toBeUndefined();
+    });
+
+    it('does not track bot messages', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      // Only deliver a bot message (no user message)
+      await triggerMessageEvent(
+        createMessageEvent({
+          text: 'Bot reply',
+          ts: '1704067200.000000',
+          subtype: 'bot_message',
+          botId: 'B_MY_BOT',
+        }),
+      );
+
+      await channel.setTyping('slack:C0123456789', true);
+
+      expect(
+        currentApp().client.assistant.threads.setStatus,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('pins thread_ts at setTyping(true) so setTyping(false) clears the correct thread', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      // First user message
+      await triggerMessageEvent(
+        createMessageEvent({
+          text: 'First',
+          ts: '1704067200.000000',
+          user: 'U_USER_456',
+        }),
+      );
+
+      await channel.setTyping('slack:C0123456789', true);
+
+      // New message arrives mid-processing
+      await triggerMessageEvent(
+        createMessageEvent({
+          text: 'Second',
+          ts: '1704067300.000000',
+          user: 'U_USER_456',
+        }),
+      );
+
+      await channel.setTyping('slack:C0123456789', false);
+
+      // Both calls should target the original ts, not the new one
+      const calls =
+        currentApp().client.assistant.threads.setStatus.mock.calls;
+      expect(calls[0][0].thread_ts).toBe('1704067200.000000');
+      expect(calls[1][0].thread_ts).toBe('1704067200.000000');
+    });
+
+    it('uses thread_ts for threaded replies', async () => {
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      // Message in a thread — thread_ts differs from ts
+      await triggerMessageEvent(
+        createMessageEvent({
+          text: 'Thread reply',
+          ts: '1704067201.000000',
+          threadTs: '1704067200.000000',
+          user: 'U_USER_456',
+        }),
+      );
+
+      await channel.setTyping('slack:C0123456789', true);
+
+      expect(
+        currentApp().client.assistant.threads.setStatus,
+      ).toHaveBeenCalledWith({
+        channel_id: 'C0123456789',
+        thread_ts: '1704067200.000000',
+        status: 'is thinking...',
+      });
     });
   });
 
