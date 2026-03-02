@@ -1,23 +1,18 @@
 /**
  * Container Runner for NanoClaw
- * Spawns agent execution in Docker containers and handles IPC
+ * Spawns agent execution in containers and handles IPC
  */
-import { ChildProcess, execFile, spawn } from 'child_process';
+import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 
 import {
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
-  CONTAINER_SECRETS,
   CONTAINER_TIMEOUT,
-  CONTAINER_GID,
-  CONTAINER_UID,
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
-  RESTRICTED_NETWORK_NAME,
   TIMEZONE,
 } from './config.js';
 import { readEnvFile } from './env.js';
@@ -26,7 +21,7 @@ import { logger } from './logger.js';
 import {
   CONTAINER_RUNTIME_BIN,
   readonlyMountArgs,
-  stopContainerArgs,
+  stopContainer,
 } from './container-runtime.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
@@ -44,8 +39,6 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   secrets?: Record<string, string>;
-  images?: Array<{ messageId: string; filename: string }>;
-  documents?: Array<{ messageId: string; filename: string }>;
 }
 
 export interface ContainerOutput {
@@ -53,76 +46,6 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
-}
-
-/**
- * Create per-group Claude sessions directory with default settings.
- * Returns the path to the .claude/ directory.
- */
-function setupSessionDirectory(groupFolder: string): string {
-  const groupSessionsDir = path.join(
-    DATA_DIR,
-    'sessions',
-    groupFolder,
-    '.claude',
-  );
-  fs.mkdirSync(groupSessionsDir, { recursive: true });
-  // Ensure writable by container's node user
-  try {
-    fs.chownSync(groupSessionsDir, CONTAINER_UID, CONTAINER_GID);
-  } catch {}
-
-  const settingsFile = path.join(groupSessionsDir, 'settings.json');
-  let settings: Record<string, unknown> = {
-    env: {
-      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-      CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-      CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-    },
-  };
-  if (fs.existsSync(settingsFile)) {
-    try {
-      settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
-    } catch {}
-  }
-  // Sync CLAUDE_MODEL from .env into settings so the SDK picks it up
-  const modelFromEnv = readEnvFile(['CLAUDE_MODEL']).CLAUDE_MODEL;
-  if (modelFromEnv) {
-    settings.model = modelFromEnv;
-  }
-  fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n');
-
-  return groupSessionsDir;
-}
-
-/** Sync skills from container/skills/ into the group's .claude/skills/. */
-function syncSkillsToGroup(groupSessionsDir: string): void {
-  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
-  const skillsDst = path.join(groupSessionsDir, 'skills');
-  if (fs.existsSync(skillsSrc)) {
-    for (const skillDir of fs.readdirSync(skillsSrc)) {
-      const srcDir = path.join(skillsSrc, skillDir);
-      if (!fs.statSync(srcDir).isDirectory()) continue;
-      const dstDir = path.join(skillsDst, skillDir);
-      fs.cpSync(srcDir, dstDir, { recursive: true });
-    }
-  }
-}
-
-/**
- * Create per-group IPC namespace with required subdirectories.
- * Returns the path to the group's IPC directory.
- */
-function setupGroupIpcNamespace(groupFolder: string): string {
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
-  for (const sub of ['messages', 'tasks', 'input', 'media']) {
-    const dir = path.join(groupIpcDir, sub);
-    fs.mkdirSync(dir, { recursive: true });
-    try {
-      fs.chownSync(dir, CONTAINER_UID, CONTAINER_GID);
-    } catch {}
-  }
-  return groupIpcDir;
 }
 
 interface VolumeMount {
@@ -151,17 +74,6 @@ function buildVolumeMounts(
       readonly: true,
     });
 
-    // Shadow .env so the agent cannot read secrets from the mounted project root.
-    // Secrets are passed via stdin instead (see readSecrets()).
-    const envFile = path.join(projectRoot, '.env');
-    if (fs.existsSync(envFile)) {
-      mounts.push({
-        hostPath: '/dev/null',
-        containerPath: '/workspace/project/.env',
-        readonly: true,
-      });
-    }
-
     // Main also gets its group folder as the working directory
     mounts.push({
       hostPath: groupDir,
@@ -177,7 +89,7 @@ function buildVolumeMounts(
     });
 
     // Global memory directory (read-only for non-main)
-    // Docker bind mounts work with both files and directories
+    // Only directory mounts are supported, not file mounts
     const globalDir = path.join(GROUPS_DIR, 'global');
     if (fs.existsSync(globalDir)) {
       mounts.push({
@@ -188,50 +100,71 @@ function buildVolumeMounts(
     }
   }
 
-  const groupSessionsDir = setupSessionDirectory(group.folder);
-  syncSkillsToGroup(groupSessionsDir);
+  // Per-group Claude sessions directory (isolated from other groups)
+  // Each group gets their own .claude/ to prevent cross-group session access
+  const groupSessionsDir = path.join(
+    DATA_DIR,
+    'sessions',
+    group.folder,
+    '.claude',
+  );
+  fs.mkdirSync(groupSessionsDir, { recursive: true });
+  const settingsFile = path.join(groupSessionsDir, 'settings.json');
+  if (!fs.existsSync(settingsFile)) {
+    fs.writeFileSync(
+      settingsFile,
+      JSON.stringify(
+        {
+          env: {
+            // Enable agent swarms (subagent orchestration)
+            // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
+            CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+            // Load CLAUDE.md from additional mounted directories
+            // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
+            CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+            // Enable Claude's memory feature (persists user preferences between sessions)
+            // https://code.claude.com/docs/en/memory#manage-auto-memory
+            CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+          },
+        },
+        null,
+        2,
+      ) + '\n',
+    );
+  }
+
+  // Sync skills from container/skills/ into each group's .claude/skills/
+  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
+  const skillsDst = path.join(groupSessionsDir, 'skills');
+  if (fs.existsSync(skillsSrc)) {
+    for (const skillDir of fs.readdirSync(skillsSrc)) {
+      const srcDir = path.join(skillsSrc, skillDir);
+      if (!fs.statSync(srcDir).isDirectory()) continue;
+      const dstDir = path.join(skillsDst, skillDir);
+      fs.cpSync(srcDir, dstDir, { recursive: true });
+    }
+  }
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
     readonly: false,
   });
 
-  // Gmail credentials directory (for Gmail MCP inside the container).
-  // Read-only for non-main groups to prevent token exfiltration.
-  // Main group needs read-write for OAuth token refresh.
-  const homeDir = os.homedir();
-  const gmailDir = path.join(homeDir, '.gmail-mcp');
-  if (fs.existsSync(gmailDir)) {
-    mounts.push({
-      hostPath: gmailDir,
-      containerPath: '/home/node/.gmail-mcp',
-      readonly: !isMain,
-    });
-  }
-
-  const groupIpcDir = setupGroupIpcNamespace(group.folder);
+  // Per-group IPC namespace: each group gets its own IPC directory
+  // This prevents cross-group privilege escalation via IPC
+  const groupIpcDir = resolveGroupIpcPath(group.folder);
+  fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
     readonly: false,
   });
 
-  // Bitwarden CLI cache: persistent vault data so bw doesn't re-sync from scratch.
-  // Always mounted — all groups have Bitwarden access.
-  const bwCacheDir = path.join(DATA_DIR, 'bitwarden', group.folder);
-  fs.mkdirSync(bwCacheDir, { recursive: true });
-  try {
-    fs.chownSync(bwCacheDir, CONTAINER_UID, CONTAINER_GID);
-  } catch {}
-  mounts.push({
-    hostPath: bwCacheDir,
-    containerPath: '/home/node/.config/Bitwarden CLI',
-    readonly: false,
-  });
-
-  // Copy agent-runner source into a per-group location so each group gets
-  // its own copy. Recompiled on container startup via entrypoint.sh.
-  // Mounted read-only to prevent prompt injection from backdooring the source.
+  // Copy agent-runner source into a per-group writable location so agents
+  // can customize it (add tools, change behavior) without affecting other
+  // groups. Recompiled on container startup via entrypoint.sh.
   const agentRunnerSrc = path.join(
     projectRoot,
     'container',
@@ -244,13 +177,13 @@ function buildVolumeMounts(
     group.folder,
     'agent-runner-src',
   );
-  if (fs.existsSync(agentRunnerSrc)) {
+  if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
     fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
   }
   mounts.push({
     hostPath: groupAgentRunnerDir,
     containerPath: '/app/src',
-    readonly: true,
+    readonly: false,
   });
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
@@ -271,30 +204,15 @@ function buildVolumeMounts(
  * Secrets are never written to disk or mounted as files.
  */
 function readSecrets(): Record<string, string> {
-  return readEnvFile(CONTAINER_SECRETS);
+  return readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
 }
 
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
   isMain: boolean,
-  networkMode?: 'full' | 'restricted' | 'none',
 ): string[] {
-  const args: string[] = [
-    'run',
-    '-i',
-    '--rm',
-    '--name',
-    containerName,
-    '--memory',
-    '2g',
-    '--pids-limit',
-    '256',
-    '--security-opt',
-    'no-new-privileges:true',
-    '--cap-drop',
-    'ALL',
-  ];
+  const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
@@ -304,29 +222,16 @@ function buildContainerArgs(
   // or when getuid is unavailable (native Windows without WSL).
   const hostUid = process.getuid?.();
   const hostGid = process.getgid?.();
-  if (hostUid != null && hostUid !== 0 && hostUid !== CONTAINER_UID) {
-    args.push('--user', `${hostUid}:${hostGid}`);
+  if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
+    if (isMain) {
+      // Main containers start as root so the entrypoint can mount --bind
+      // to shadow .env. Privileges are dropped via setpriv in entrypoint.sh.
+      args.push('-e', `RUN_UID=${hostUid}`);
+      args.push('-e', `RUN_GID=${hostGid}`);
+    } else {
+      args.push('--user', `${hostUid}:${hostGid}`);
+    }
     args.push('-e', 'HOME=/home/node');
-  }
-
-  // Disable telemetry and error reporting inside containers
-  args.push('-e', 'DISABLE_TELEMETRY=1');
-  args.push('-e', 'DISABLE_ERROR_REPORTING=1');
-  args.push('-e', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1');
-
-  // Bitwarden is always enabled. Credentials are passed via stdin JSON (input.secrets),
-  // NOT as Docker env vars (which are visible via docker inspect).
-  args.push('-e', 'BW_ENABLED=1');
-
-  // Network: all containers default to full network access.
-  // Per-group override via containerConfig.networkMode still supported.
-  const effectiveNetworkMode = networkMode ?? 'full';
-  if (effectiveNetworkMode === 'none') {
-    args.push('--network', 'none');
-    args.push('-e', 'NETWORK_PROXY=true');
-  } else if (effectiveNetworkMode === 'restricted') {
-    args.push('--network', RESTRICTED_NETWORK_NAME);
-    args.push('-e', 'NETWORK_RESTRICTED=true');
   }
 
   for (const mount of mounts) {
@@ -356,12 +261,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(
-    mounts,
-    containerName,
-    input.isMain,
-    group.containerConfig?.networkMode,
-  );
+  const containerArgs = buildContainerArgs(mounts, containerName, input.isMain);
 
   logger.debug(
     {
@@ -500,20 +400,15 @@ export async function runContainerAgent(
         { group: group.name, containerName },
         'Container timeout, stopping gracefully',
       );
-      execFile(
-        CONTAINER_RUNTIME_BIN,
-        stopContainerArgs(containerName),
-        { timeout: 15000 },
-        (err) => {
-          if (err) {
-            logger.warn(
-              { group: group.name, containerName, err },
-              'Graceful stop failed, force killing',
-            );
-            container.kill('SIGKILL');
-          }
-        },
-      );
+      exec(stopContainer(containerName), { timeout: 15000 }, (err) => {
+        if (err) {
+          logger.warn(
+            { group: group.name, containerName, err },
+            'Graceful stop failed, force killing',
+          );
+          container.kill('SIGKILL');
+        }
+      });
     };
 
     let timeout = setTimeout(killOnTimeout, timeoutMs);
