@@ -127,10 +127,7 @@ function saveState(): void {
   saveStateTimer = setTimeout(() => {
     saveStateTimer = undefined;
     setRouterState('last_timestamp', lastTimestamp);
-    setRouterState(
-      'last_agent_timestamp',
-      JSON.stringify(lastAgentTimestamp),
-    );
+    setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
   }, SAVE_STATE_DEBOUNCE_MS);
 }
 
@@ -140,10 +137,7 @@ function flushState(): void {
     clearTimeout(saveStateTimer);
     saveStateTimer = undefined;
     setRouterState('last_timestamp', lastTimestamp);
-    setRouterState(
-      'last_agent_timestamp',
-      JSON.stringify(lastAgentTimestamp),
-    );
+    setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
   }
 }
 
@@ -266,12 +260,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // This happens before the container starts, so the user gets instant feedback.
   const lastMsg = missedMessages[missedMessages.length - 1];
   const reactionMessageKey = lastMsg
-    ? { id: lastMsg.id, remoteJid: chatJid, fromMe: false, participant: lastMsg.sender }
+    ? {
+        id: lastMsg.id,
+        remoteJid: chatJid,
+        fromMe: false,
+        participant: lastMsg.sender,
+      }
     : undefined;
   if (reactionMessageKey && channel.sendReaction) {
-    channel.sendReaction(chatJid, reactionMessageKey, '👀').catch((err) =>
-      logger.warn({ chatJid, err }, 'Failed to send 👀 reaction'),
-    );
+    channel
+      .sendReaction(chatJid, reactionMessageKey, '👀')
+      .catch((err) =>
+        logger.warn({ chatJid, err }, 'Failed to send 👀 reaction'),
+      );
   }
 
   // Track idle timer for closing stdin when agent is idle
@@ -346,10 +347,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // Send completion reaction: ✅ on success, remove on error
   if (reactionMessageKey && channel.sendReaction) {
-    const completionEmoji = (output === 'error' || hadError) ? '❌' : '✅';
-    channel.sendReaction(chatJid, reactionMessageKey, completionEmoji).catch((err) =>
-      logger.warn({ chatJid, err }, 'Failed to send completion reaction'),
-    );
+    const completionEmoji = output === 'error' || hadError ? '❌' : '✅';
+    channel
+      .sendReaction(chatJid, reactionMessageKey, completionEmoji)
+      .catch((err) =>
+        logger.warn({ chatJid, err }, 'Failed to send completion reaction'),
+      );
   }
 
   if (output === 'error' || hadError) {
@@ -650,11 +653,10 @@ function validateEnvironment(): void {
   }
 
   try {
-    const imageId = execFileSync(
-      'docker',
-      ['images', '-q', CONTAINER_IMAGE],
-      { encoding: 'utf-8', timeout: 5000 },
-    ).trim();
+    const imageId = execFileSync('docker', ['images', '-q', CONTAINER_IMAGE], {
+      encoding: 'utf-8',
+      timeout: 5000,
+    }).trim();
     if (!imageId) {
       logger.fatal(
         { image: CONTAINER_IMAGE },

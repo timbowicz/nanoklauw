@@ -24,7 +24,10 @@ export class ImageHandler {
   private cleanupTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor() {
-    this.cleanupTimer = setInterval(() => this.evictStale(), CLEANUP_INTERVAL_MS);
+    this.cleanupTimer = setInterval(
+      () => this.evictStale(),
+      CLEANUP_INTERVAL_MS,
+    );
   }
 
   /** Store image data for later attachment to messages. */
@@ -87,7 +90,10 @@ export class ImageHandler {
       }
     }
     if (evicted > 0) {
-      logger.info({ evicted, remaining: this.pendingImages.size }, 'Evicted stale pending images');
+      logger.info(
+        { evicted, remaining: this.pendingImages.size },
+        'Evicted stale pending images',
+      );
     }
   }
 
