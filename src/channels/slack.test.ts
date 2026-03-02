@@ -1309,8 +1309,7 @@ describe('SlackChannel', () => {
       await channel.setTyping('slack:C0123456789', false);
 
       // Both calls should target the original ts, not the new one
-      const calls =
-        currentApp().client.assistant.threads.setStatus.mock.calls;
+      const calls = currentApp().client.assistant.threads.setStatus.mock.calls;
       expect(calls[0][0].thread_ts).toBe('1704067200.000000');
       expect(calls[1][0].thread_ts).toBe('1704067200.000000');
     });
