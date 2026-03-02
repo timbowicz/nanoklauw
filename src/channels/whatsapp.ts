@@ -87,11 +87,39 @@ export class WhatsAppChannel implements Channel {
     await Promise.race([connected, timeout]);
   }
 
+  /**
+   * Harden permissions on WhatsApp auth files (600) and directories (700)
+   * to prevent other users on the system from reading session credentials.
+   */
+  private hardenAuthPermissions(authDir: string): void {
+    try {
+      fs.chmodSync(authDir, 0o700);
+      for (const entry of fs.readdirSync(authDir)) {
+        const full = path.join(authDir, entry);
+        const stat = fs.statSync(full);
+        if (stat.isDirectory()) {
+          fs.chmodSync(full, 0o700);
+          // Handle subdirectories (e.g. keys/)
+          for (const sub of fs.readdirSync(full)) {
+            const subFull = path.join(full, sub);
+            const subStat = fs.statSync(subFull);
+            fs.chmodSync(subFull, subStat.isDirectory() ? 0o700 : 0o600);
+          }
+        } else {
+          fs.chmodSync(full, 0o600);
+        }
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Failed to harden auth file permissions');
+    }
+  }
+
   private async connectInternal(onFirstOpen?: () => void): Promise<void> {
     const authDir = path.join(STORE_DIR, 'auth');
-    fs.mkdirSync(authDir, { recursive: true });
+    fs.mkdirSync(authDir, { recursive: true, mode: 0o700 });
 
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
+    this.hardenAuthPermissions(authDir);
 
     const { version } = await fetchLatestWaWebVersion({}).catch((err) => {
       logger.warn(
@@ -216,7 +244,10 @@ export class WhatsAppChannel implements Channel {
       }
     });
 
-    this.sock.ev.on('creds.update', saveCreds);
+    this.sock.ev.on('creds.update', async () => {
+      await saveCreds();
+      this.hardenAuthPermissions(authDir);
+    });
 
     this.sock.ev.on('messages.upsert', async ({ messages }) => {
       for (const msg of messages) {
