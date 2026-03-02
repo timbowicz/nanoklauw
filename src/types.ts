@@ -124,7 +124,12 @@ export interface Channel {
   // Optional: send a reaction emoji to a specific message.
   sendReaction?(
     chatJid: string,
-    messageKey: { id: string; remoteJid: string; fromMe?: boolean; participant?: string },
+    messageKey: {
+      id: string;
+      remoteJid: string;
+      fromMe?: boolean;
+      participant?: string;
+    },
     emoji: string,
   ): Promise<void>;
   // Optional: react to the most recent message in a chat.

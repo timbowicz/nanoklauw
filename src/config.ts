@@ -48,7 +48,10 @@ export const IPC_POLL_INTERVAL = 1000;
 // Host directories mounted into containers must be owned by this uid.
 export const CONTAINER_UID = 1000;
 export const CONTAINER_GID = 1000;
-export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min default — how long to keep container alive after last result
+// IDLE_TIMEOUT must be well below CONTAINER_TIMEOUT so the graceful _close
+// sentinel fires before the hard kill. container-runner.ts sets the hard kill
+// deadline to Math.max(CONTAINER_TIMEOUT, IDLE_TIMEOUT + 30_000).
+export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '600000', 10); // 10min default
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
@@ -72,6 +75,7 @@ export const TIMEZONE =
 export const CONTAINER_SECRETS = [
   'CLAUDE_CODE_OAUTH_TOKEN',
   'ANTHROPIC_API_KEY',
+  'CLAUDE_MODEL',
   'GEMINI_API_KEY',
   'HA_URL',
   'HA_TOKEN',

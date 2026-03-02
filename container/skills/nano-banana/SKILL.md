@@ -20,10 +20,18 @@ You have MCP tools for image generation, editing, and sending:
 
 | Parameter | Default | Notes |
 |-----------|---------|-------|
-| `prompt` | (required) | English only, max 480 tokens. Be descriptive. |
-| `model` | `fast` | `fast` $0.02, `standard` $0.04, `ultra` $0.06 |
-| `aspect_ratio` | `1:1` | `1:1`, `3:4`, `4:3`, `9:16`, `16:9` |
-| `number_of_images` | `1` | 1-4 per call |
+| `prompt` | (required) | English only. Be descriptive. |
+| `model` | `gemini-3.1-flash-image-preview` | See model table below |
+| `caption` | (optional) | Caption to send with the image |
+
+### Generation Models
+
+| Model | Best for |
+|-------|----------|
+| `gemini-3.1-flash-image-preview` | **Default.** Fast, high quality, 4K, thinking mode, search grounding (~$0.05-0.07/image). |
+| `gemini-3-pro-image-preview` | Maximum quality fallback (~$0.13-0.24/image). |
+| `imagen-4.0-fast-generate-001` | Legacy Imagen, fast and cheap (~$0.02). Only if specifically requested. |
+| `imagen-4.0-generate-001` | Legacy Imagen, higher quality (~$0.04). Only if specifically requested. |
 
 ## edit_image
 
@@ -33,7 +41,7 @@ Edit/transform an existing image using AI. Use when a user sends a photo and wan
 |-----------|---------|-------|
 | `prompt` | (required) | English editing instruction. Be specific about changes. |
 | `image_path` | (required) | Path to input image (e.g., `/workspace/ipc/media/abc123.jpg`) |
-| `model` | `gemini-2.5-flash-image` | `gemini-2.5-flash-image` (fast/cheap) or `gemini-3-pro-image-preview` (higher quality) |
+| `model` | `gemini-3.1-flash-image-preview` | `gemini-3.1-flash-image-preview` (default) or `gemini-3-pro-image-preview` (max quality) |
 | `caption` | (optional) | Caption to send with the edited image |
 
 **When to use:** User sends a photo and asks for changes — "make this more modern", "change the color", "add plants", "redesign this room", etc.
@@ -47,9 +55,9 @@ Edit/transform an existing image using AI. Use when a user sends a photo and wan
 
 ## Model Selection
 
-- **Default to `fast`** for all requests ($0.02/image)
-- Use `standard` when user says "high quality", "detailed", or "better" ($0.04)
-- Use `ultra` only when user explicitly asks for "best quality", "ultra", or "maximum quality" ($0.06)
+- **Default to `gemini-3.1-flash-image-preview`** for all requests (fast, high quality, ~$0.05-0.07/image)
+- Use `gemini-3-pro-image-preview` when user wants maximum quality or flash result wasn't satisfactory
+- Use Imagen models (`imagen-4.0-fast-generate-001`, `imagen-4.0-generate-001`) only if specifically requested
 
 ## Aspect Ratio Selection
 

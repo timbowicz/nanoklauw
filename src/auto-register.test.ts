@@ -4,7 +4,13 @@ import { slugifyGroupName, maybeAutoRegister } from './auto-register.js';
 import type { RegisteredGroup } from './types.js';
 
 function makeGroup(folder: string): RegisteredGroup {
-  return { name: folder, folder, trigger: '@Andy', added_at: '', requiresTrigger: true };
+  return {
+    name: folder,
+    folder,
+    trigger: '@Andy',
+    added_at: '',
+    requiresTrigger: true,
+  };
 }
 
 describe('slugifyGroupName', () => {

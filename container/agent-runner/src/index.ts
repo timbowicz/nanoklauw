@@ -586,6 +586,7 @@ async function runQuery(
   for await (const message of query({
     prompt: stream,
     options: {
+      model: sdkEnv.CLAUDE_MODEL || undefined,
       cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
@@ -635,6 +636,15 @@ async function runQuery(
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
+      // Log tool use for debugging
+      const content = (message as { content?: Array<{ type: string; name?: string; input?: unknown }> }).content;
+      if (content) {
+        for (const block of content) {
+          if (block.type === 'tool_use') {
+            log(`Tool use: ${block.name} input=${JSON.stringify(block.input).slice(0, 200)}`);
+          }
+        }
+      }
     }
 
     if (message.type === 'system' && message.subtype === 'init') {
@@ -688,6 +698,10 @@ async function main(): Promise<void> {
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
   for (const [key, value] of Object.entries(containerInput.secrets || {})) {
     sdkEnv[key] = value;
+  }
+  // Ensure ANTHROPIC_MODEL is set so CLI subprocesses also use the right model
+  if (sdkEnv.CLAUDE_MODEL) {
+    sdkEnv.ANTHROPIC_MODEL = sdkEnv.CLAUDE_MODEL;
   }
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));

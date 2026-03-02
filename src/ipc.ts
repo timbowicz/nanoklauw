@@ -11,7 +11,13 @@ import {
   TIMEZONE,
 } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getMessageKeyInfo, getTaskById, updateTask } from './db.js';
+import {
+  createTask,
+  deleteTask,
+  getMessageKeyInfo,
+  getTaskById,
+  updateTask,
+} from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { Channel, RegisteredGroup, SendMessageOpts } from './types.js';
@@ -39,7 +45,11 @@ export interface IpcDeps {
     availableGroups: AvailableGroup[],
     registeredJids: Set<string>,
   ) => void;
-  sendReaction: (jid: string, emoji: string, messageId?: string) => Promise<void>;
+  sendReaction: (
+    jid: string,
+    emoji: string,
+    messageId?: string,
+  ) => Promise<void>;
   sendMessageWithId?: (
     jid: string,
     text: string,
@@ -90,12 +100,19 @@ export function createIpcDeps(cfg: {
       const channel = findChannel(cfg.channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       if (messageId) {
-        if (!channel.sendReaction) throw new Error('Channel does not support sendReaction');
+        if (!channel.sendReaction)
+          throw new Error('Channel does not support sendReaction');
         const keyInfo = getMessageKeyInfo(messageId, jid);
-        const messageKey = { id: messageId, remoteJid: jid, fromMe: keyInfo.fromMe, participant: keyInfo.sender };
+        const messageKey = {
+          id: messageId,
+          remoteJid: jid,
+          fromMe: keyInfo.fromMe,
+          participant: keyInfo.sender,
+        };
         await channel.sendReaction(jid, messageKey, emoji);
       } else {
-        if (!channel.reactToLatestMessage) throw new Error('Channel does not support reactions');
+        if (!channel.reactToLatestMessage)
+          throw new Error('Channel does not support reactions');
         await channel.reactToLatestMessage(jid, emoji);
       }
     },
@@ -114,10 +131,7 @@ export function createIpcDeps(cfg: {
   };
 }
 
-function getGroupName(
-  deps: IpcDeps,
-  folder: string,
-): string {
+function getGroupName(deps: IpcDeps, folder: string): string {
   const groups = deps.registeredGroups();
   const entry = Object.values(groups).find((g) => g.folder === folder);
   return entry?.name || folder;
@@ -506,14 +520,23 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 const targetGroup = registeredGroups[data.chatJid];
                 if (canAccessJid(sourceGroup, targetGroup?.folder, isMain)) {
                   try {
-                    await deps.sendReaction(data.chatJid, data.emoji, data.messageId);
+                    await deps.sendReaction(
+                      data.chatJid,
+                      data.emoji,
+                      data.messageId,
+                    );
                     logger.info(
                       { chatJid: data.chatJid, emoji: data.emoji, sourceGroup },
                       'IPC reaction sent',
                     );
                   } catch (err) {
                     logger.error(
-                      { chatJid: data.chatJid, emoji: data.emoji, sourceGroup, err },
+                      {
+                        chatJid: data.chatJid,
+                        emoji: data.emoji,
+                        sourceGroup,
+                        err,
+                      },
                       'IPC reaction failed',
                     );
                   }

@@ -88,11 +88,39 @@ export class WhatsAppChannel implements Channel {
     await Promise.race([connected, timeout]);
   }
 
+  /**
+   * Harden permissions on WhatsApp auth files (600) and directories (700)
+   * to prevent other users on the system from reading session credentials.
+   */
+  private hardenAuthPermissions(authDir: string): void {
+    try {
+      fs.chmodSync(authDir, 0o700);
+      for (const entry of fs.readdirSync(authDir)) {
+        const full = path.join(authDir, entry);
+        const stat = fs.statSync(full);
+        if (stat.isDirectory()) {
+          fs.chmodSync(full, 0o700);
+          // Handle subdirectories (e.g. keys/)
+          for (const sub of fs.readdirSync(full)) {
+            const subFull = path.join(full, sub);
+            const subStat = fs.statSync(subFull);
+            fs.chmodSync(subFull, subStat.isDirectory() ? 0o700 : 0o600);
+          }
+        } else {
+          fs.chmodSync(full, 0o600);
+        }
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Failed to harden auth file permissions');
+    }
+  }
+
   private async connectInternal(onFirstOpen?: () => void): Promise<void> {
     const authDir = path.join(STORE_DIR, 'auth');
-    fs.mkdirSync(authDir, { recursive: true });
+    fs.mkdirSync(authDir, { recursive: true, mode: 0o700 });
 
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
+    this.hardenAuthPermissions(authDir);
 
     const { version } = await fetchLatestWaWebVersion({}).catch((err) => {
       logger.warn(
@@ -217,7 +245,10 @@ export class WhatsAppChannel implements Channel {
       }
     });
 
-    this.sock.ev.on('creds.update', saveCreds);
+    this.sock.ev.on('creds.update', async () => {
+      await saveCreds();
+      this.hardenAuthPermissions(authDir);
+    });
 
     this.sock.ev.on('messages.upsert', async ({ messages }) => {
       for (const msg of messages) {
@@ -349,7 +380,8 @@ export class WhatsAppChannel implements Channel {
           const groups = this.opts.registeredGroups();
           if (!groups[chatJid]) continue;
 
-          const reactorJid = reaction.key?.participant || reaction.key?.remoteJid || '';
+          const reactorJid =
+            reaction.key?.participant || reaction.key?.remoteJid || '';
           const emoji = reaction.text || '';
           const timestamp = reaction.senderTimestampMs
             ? new Date(Number(reaction.senderTimestampMs)).toISOString()
@@ -371,7 +403,7 @@ export class WhatsAppChannel implements Channel {
               reactor: reactorJid.split('@')[0],
               emoji: emoji || '(removed)',
             },
-            emoji ? 'Reaction added' : 'Reaction removed'
+            emoji ? 'Reaction added' : 'Reaction removed',
           );
         } catch (err) {
           logger.error({ err }, 'Failed to process reaction');
@@ -506,7 +538,12 @@ export class WhatsAppChannel implements Channel {
 
   async sendReaction(
     chatJid: string,
-    messageKey: { id: string; remoteJid: string; fromMe?: boolean; participant?: string },
+    messageKey: {
+      id: string;
+      remoteJid: string;
+      fromMe?: boolean;
+      participant?: string;
+    },
     emoji: string,
   ): Promise<void> {
     if (!this.connected) {
@@ -523,7 +560,7 @@ export class WhatsAppChannel implements Channel {
           messageId: messageKey.id?.slice(0, 10) + '...',
           emoji: emoji || '(removed)',
         },
-        emoji ? 'Reaction sent' : 'Reaction removed'
+        emoji ? 'Reaction sent' : 'Reaction removed',
       );
     } catch (err) {
       logger.error({ chatJid, emoji, err }, 'Failed to send reaction');
@@ -599,7 +636,10 @@ export class WhatsAppChannel implements Channel {
           if (reg && reg.name !== metadata.subject) {
             if (updateRegisteredGroupName(jid, metadata.subject)) {
               reg.name = metadata.subject;
-              logger.debug({ jid, name: metadata.subject }, 'Updated registered group name');
+              logger.debug(
+                { jid, name: metadata.subject },
+                'Updated registered group name',
+              );
             }
           }
           count++;
