@@ -25,12 +25,18 @@ export class DocumentHandler {
   private cleanupTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor() {
-    this.cleanupTimer = setInterval(() => this.evictStale(), CLEANUP_INTERVAL_MS);
+    this.cleanupTimer = setInterval(
+      () => this.evictStale(),
+      CLEANUP_INTERVAL_MS,
+    );
   }
 
   /** Store document data for later attachment to messages. */
   storeDocument(messageId: string, document: DocumentBlock): void {
-    this.pendingDocuments.set(messageId, { data: document, storedAt: Date.now() });
+    this.pendingDocuments.set(messageId, {
+      data: document,
+      storedAt: Date.now(),
+    });
   }
 
   /**
@@ -91,7 +97,10 @@ export class DocumentHandler {
       }
     }
     if (evicted > 0) {
-      logger.info({ evicted, remaining: this.pendingDocuments.size }, 'Evicted stale pending documents');
+      logger.info(
+        { evicted, remaining: this.pendingDocuments.size },
+        'Evicted stale pending documents',
+      );
     }
   }
 

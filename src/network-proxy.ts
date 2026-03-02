@@ -450,10 +450,7 @@ export async function handleProxyWebSearch(
   const { requestId, query } = data;
 
   // Web search is always allowed — it's a Google query, not arbitrary URL fetching
-  logger.info(
-    { requestId, query, sourceGroup },
-    'Web search auto-approved',
-  );
+  logger.info({ requestId, query, sourceGroup }, 'Web search auto-approved');
   try {
     const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
     const result = await fetchUrl(searchUrl);
