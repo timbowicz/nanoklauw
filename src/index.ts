@@ -1,3 +1,4 @@
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -10,11 +11,13 @@ import {
 import type { ChannelOpts } from './channels/registry.js';
 import {
   ASSISTANT_NAME,
+  CONTAINER_IMAGE,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
   TRIGGER_PATTERN,
 } from './config.js';
+import { readEnvFile } from './env.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -628,12 +631,49 @@ function recoverPendingMessages(): void {
   }
 }
 
+/** Pre-flight checks: verify required env vars and container image exist. */
+function validateEnvironment(): void {
+  const envSecrets = readEnvFile([
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'ANTHROPIC_API_KEY',
+  ]);
+  const hasToken =
+    process.env.CLAUDE_CODE_OAUTH_TOKEN || envSecrets.CLAUDE_CODE_OAUTH_TOKEN;
+  const hasApiKey =
+    process.env.ANTHROPIC_API_KEY || envSecrets.ANTHROPIC_API_KEY;
+
+  if (!hasToken && !hasApiKey) {
+    logger.fatal(
+      'Missing CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in .env — agents cannot authenticate',
+    );
+    process.exit(1);
+  }
+
+  try {
+    const imageId = execFileSync(
+      'docker',
+      ['images', '-q', CONTAINER_IMAGE],
+      { encoding: 'utf-8', timeout: 5000 },
+    ).trim();
+    if (!imageId) {
+      logger.fatal(
+        { image: CONTAINER_IMAGE },
+        'Container image not found — run ./container/build.sh first',
+      );
+      process.exit(1);
+    }
+  } catch {
+    // Docker not reachable — ensureContainerRuntimeRunning() will handle this
+  }
+}
+
 function ensureContainerSystemRunning(): void {
   ensureContainerRuntimeRunning();
   cleanupOrphans();
 }
 
 async function main(): Promise<void> {
+  validateEnvironment();
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
