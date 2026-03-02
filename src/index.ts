@@ -33,6 +33,7 @@ import {
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
+  getLatestUserMessage,
   getMessagesSince,
   getNewMessages,
   getRouterState,
@@ -292,6 +293,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
+  let completionReactionSent = false;
+
+  const sendCompletionReaction = (emoji: string) => {
+    if (completionReactionSent || !reactionMessageKey || !channel.sendReaction) return;
+    completionReactionSent = true;
+    channel.sendReaction(chatJid, reactionMessageKey, emoji).catch((err) =>
+      logger.warn({ chatJid, err }, 'Failed to send completion reaction'),
+    );
+  };
 
   const output = await runAgent(
     group,
@@ -317,6 +327,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         if (text) {
           await channel.sendMessage(chatJid, text);
           outputSentToUser = true;
+
+          // Send ✅ on the user's trigger message to replace ☁️.
+          // Uses DB lookup instead of the fixed reactionMessageKey so it works
+          // for piped messages too (not just the first processGroupMessages batch).
+          if (channel.sendReaction) {
+            const latestUserMsg = getLatestUserMessage(chatJid);
+            if (latestUserMsg) {
+              channel.sendReaction(chatJid, {
+                id: latestUserMsg.id,
+                remoteJid: chatJid,
+                fromMe: false,
+                participant: latestUserMsg.sender,
+              }, '✅').catch((err) =>
+                logger.warn({ chatJid, err }, 'Failed to send ✅ reaction'),
+              );
+            }
+          }
         }
         // Only reset idle timer on actual results, not session-update markers (result: null)
         resetIdleTimer();
@@ -328,6 +355,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
       if (result.status === 'error') {
         hadError = true;
+        sendCompletionReaction('❌');
       }
     },
     imageRefs,
@@ -345,14 +373,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     documentHandler.cleanup(group.folder, documentRefs);
   }
 
-  // Send completion reaction: ✅ on success, remove on error
-  if (reactionMessageKey && channel.sendReaction) {
-    const completionEmoji = output === 'error' || hadError ? '❌' : '✅';
-    channel
-      .sendReaction(chatJid, reactionMessageKey, completionEmoji)
-      .catch((err) =>
-        logger.warn({ chatJid, err }, 'Failed to send completion reaction'),
-      );
+  // Fallback: send completion reaction if not already sent during streaming
+  if (!completionReactionSent) {
+    sendCompletionReaction((output === 'error' || hadError) ? '❌' : '✅');
   }
 
   if (output === 'error' || hadError) {

@@ -555,6 +555,15 @@ export function getLatestMessage(
   };
 }
 
+/** Get the latest message from a non-bot sender (for reaction targeting after bot replies). */
+export function getLatestUserMessage(chatJid: string): { id: string; sender?: string } | undefined {
+  const row = db
+    .prepare(`SELECT id, sender FROM messages WHERE chat_jid = ? AND is_from_me = 0 ORDER BY timestamp DESC LIMIT 1`)
+    .get(chatJid) as { id: string; sender: string | null } | undefined;
+  if (!row) return undefined;
+  return { id: row.id, sender: row.sender || undefined };
+}
+
 export function storeReaction(reaction: Reaction): void {
   if (!reaction.emoji) {
     db.prepare(
