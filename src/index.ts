@@ -54,6 +54,7 @@ import {
   ImageRef,
 } from './media-processing.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
+import { addSyncthingFolder } from './syncthing.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import {
   handleApprovalResponse,
@@ -158,6 +159,9 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
 
   // Create group folder
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
+
+  // Auto-sync new group folder to Mac via Syncthing
+  addSyncthingFolder(group.folder, group.name);
 
   logger.info(
     { jid, name: group.name, folder: group.folder },
