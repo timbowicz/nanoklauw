@@ -15,7 +15,7 @@ Added Gmail MCP server to the agent's available tools so it can read and send em
   ```
 
 ### allowedTools (inside runQuery → query() call)
-- Added: `'mcp__gmail__*'` to allow all Gmail MCP tools
+- No change needed: the base file already uses `'mcp__*'` wildcard which covers all MCP tools including Gmail
 
 ## Invariants
 - The `nanoclaw` MCP server configuration is unchanged

@@ -78,7 +78,7 @@ describe('add-gmail skill package', () => {
     expect(fs.existsSync(arFile)).toBe(true);
 
     const content = fs.readFileSync(arFile, 'utf-8');
-    expect(content).toContain('mcp__gmail__*');
+    // Gmail MCP server must be configured (allowedTools uses mcp__* wildcard)
     expect(content).toContain('@gongrzhe/server-gmail-autoauth-mcp');
   });
 

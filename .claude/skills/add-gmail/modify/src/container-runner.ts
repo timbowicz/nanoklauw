@@ -57,7 +57,6 @@ function buildVolumeMounts(
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const projectRoot = process.cwd();
-  const homeDir = os.homedir();
   const groupDir = resolveGroupFolderPath(group.folder);
 
   if (isMain) {
@@ -141,13 +140,16 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Gmail credentials directory (for Gmail MCP inside the container)
+  // Gmail credentials directory (for Gmail MCP inside the container).
+  // Read-only for non-main groups to prevent token exfiltration.
+  // Main group needs read-write for OAuth token refresh.
+  const homeDir = os.homedir();
   const gmailDir = path.join(homeDir, '.gmail-mcp');
   if (fs.existsSync(gmailDir)) {
     mounts.push({
       hostPath: gmailDir,
       containerPath: '/home/node/.gmail-mcp',
-      readonly: false, // MCP may need to refresh OAuth tokens
+      readonly: !isMain,
     });
   }
 

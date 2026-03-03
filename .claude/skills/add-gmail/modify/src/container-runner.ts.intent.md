@@ -13,16 +13,14 @@ Added a volume mount for Gmail OAuth credentials (`~/.gmail-mcp/`) so the Gmail 
     mounts.push({
       hostPath: gmailDir,
       containerPath: '/home/node/.gmail-mcp',
-      readonly: false,  // MCP may need to refresh OAuth tokens
+      readonly: !isMain,
     });
   }
   ```
 - Uses `os.homedir()` to resolve the home directory
-- Mount is read-write because the Gmail MCP server needs to refresh OAuth tokens
+- Mount is read-write for main group (needs OAuth token refresh), read-only for non-main groups (prevents token exfiltration)
 - Mount is conditional — only added if `~/.gmail-mcp/` exists on the host
-
-### Imports
-- Added: `os` import for `os.homedir()`
+- `os` was already imported in the base file
 
 ## Invariants
 - All existing mounts are unchanged

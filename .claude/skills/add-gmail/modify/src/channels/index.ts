@@ -1,13 +1,2 @@
-// Channel self-registration barrel file.
-// Each import triggers the channel module's registerChannel() call.
-
-// discord
-
-// gmail
+// Side-effect imports trigger channel self-registration
 import './gmail.js';
-
-// slack
-
-// telegram
-
-// whatsapp
