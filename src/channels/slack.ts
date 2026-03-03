@@ -73,6 +73,8 @@ export class SlackChannel implements Channel {
   private userNameCache = new Map<string, string>();
   private lastTriggerTs = new Map<string, string>();
   private botActiveThreads = new Map<string, true>();
+  private lastUserMessageTs = new Map<string, string>();
+  private activeTypingTs = new Map<string, string>();
 
   private opts: SlackChannelOpts;
 
@@ -150,6 +152,12 @@ export class SlackChannel implements Channel {
 
       const isBotMessage =
         !!(msg as { bot_id?: string }).bot_id || msg.user === this.botUserId;
+
+      // Track latest user message timestamp for typing indicator
+      if (!isBotMessage) {
+        const threadRoot = (msg as { thread_ts?: string }).thread_ts ?? msg.ts;
+        this.lastUserMessageTs.set(jid, threadRoot);
+      }
 
       // Check for text-based abort command before anything else
       if (!isBotMessage && this.isAbortCommand(content)) {
@@ -388,29 +396,31 @@ export class SlackChannel implements Channel {
   }
 
   /**
-   * Hourglass typing indicator — adds/removes an hourglass emoji reaction
-   * on the trigger message to show the bot is working.
+   * Shimmer typing indicator — uses Slack's Agents & Assistants API
+   * to show a "thinking" status on the thread. Requires assistant:write scope.
+   * Gracefully degrades when scope is missing.
    */
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
-    const ts = this.lastTriggerTs.get(jid);
-    if (!ts) return;
     const channelId = jid.replace(/^slack:/, '');
+
+    let threadTs: string | undefined;
+    if (isTyping) {
+      threadTs = this.lastUserMessageTs.get(jid);
+      if (threadTs) this.activeTypingTs.set(jid, threadTs);
+    } else {
+      threadTs = this.activeTypingTs.get(jid);
+      this.activeTypingTs.delete(jid);
+    }
+    if (!threadTs) return;
+
     try {
-      if (isTyping) {
-        await this.app.client.reactions.add({
-          channel: channelId,
-          timestamp: ts,
-          name: 'hourglass_flowing_sand',
-        });
-      } else {
-        await this.app.client.reactions.remove({
-          channel: channelId,
-          timestamp: ts,
-          name: 'hourglass_flowing_sand',
-        });
-      }
+      await this.app.client.assistant.threads.setStatus({
+        channel_id: channelId,
+        thread_ts: threadTs,
+        status: isTyping ? 'is thinking...' : '',
+      });
     } catch {
-      // Reaction failures are non-critical (message may be deleted, bot may lack permission)
+      // Silently ignore — assistant:write scope may not be available
     }
   }
 

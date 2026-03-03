@@ -296,11 +296,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let completionReactionSent = false;
 
   const sendCompletionReaction = (emoji: string) => {
-    if (completionReactionSent || !reactionMessageKey || !channel.sendReaction) return;
+    if (completionReactionSent || !reactionMessageKey || !channel.sendReaction)
+      return;
     completionReactionSent = true;
-    channel.sendReaction(chatJid, reactionMessageKey, emoji).catch((err) =>
-      logger.warn({ chatJid, err }, 'Failed to send completion reaction'),
-    );
+    channel
+      .sendReaction(chatJid, reactionMessageKey, emoji)
+      .catch((err) =>
+        logger.warn({ chatJid, err }, 'Failed to send completion reaction'),
+      );
   };
 
   const output = await runAgent(
@@ -334,14 +337,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           if (channel.sendReaction) {
             const latestUserMsg = getLatestUserMessage(chatJid);
             if (latestUserMsg) {
-              channel.sendReaction(chatJid, {
-                id: latestUserMsg.id,
-                remoteJid: chatJid,
-                fromMe: false,
-                participant: latestUserMsg.sender,
-              }, '✅').catch((err) =>
-                logger.warn({ chatJid, err }, 'Failed to send ✅ reaction'),
-              );
+              channel
+                .sendReaction(
+                  chatJid,
+                  {
+                    id: latestUserMsg.id,
+                    remoteJid: chatJid,
+                    fromMe: false,
+                    participant: latestUserMsg.sender,
+                  },
+                  '✅',
+                )
+                .catch((err) =>
+                  logger.warn({ chatJid, err }, 'Failed to send ✅ reaction'),
+                );
             }
           }
         }
@@ -375,7 +384,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // Fallback: send completion reaction if not already sent during streaming
   if (!completionReactionSent) {
-    sendCompletionReaction((output === 'error' || hadError) ? '❌' : '✅');
+    sendCompletionReaction(output === 'error' || hadError ? '❌' : '✅');
   }
 
   if (output === 'error' || hadError) {
