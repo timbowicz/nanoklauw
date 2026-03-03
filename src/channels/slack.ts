@@ -1,3 +1,4 @@
+import https from 'https';
 import { App, LogLevel } from '@slack/bolt';
 import type { GenericMessageEvent, BotMessageEvent } from '@slack/types';
 
@@ -7,6 +8,7 @@ import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import {
   Channel,
+  DocumentBlock,
   OnInboundMessage,
   OnChatMetadata,
   RegisteredGroup,
@@ -21,6 +23,9 @@ const MAX_MESSAGE_LENGTH = 4000;
 
 // Maximum number of active threads to track before evicting the oldest.
 const MAX_ACTIVE_THREADS = 1000;
+
+// Maximum file size to download (25MB, matching WhatsApp's limit in media-processing.ts)
+const MAX_FILE_SIZE = 25 * 1024 * 1024;
 
 // Maximum number of messages to buffer when disconnected.
 const MAX_OUTGOING_QUEUE = 100;
@@ -61,6 +66,7 @@ export class SlackChannel implements Channel {
   name = 'slack';
 
   private app: App;
+  private botToken!: string;
   private botUserId: string | undefined;
   private connected = false;
   private outgoingQueue: Array<{
@@ -97,6 +103,8 @@ export class SlackChannel implements Channel {
         'SLACK_BOT_TOKEN and SLACK_APP_TOKEN must be set in .env',
       );
     }
+
+    this.botToken = botToken;
 
     this.app = new App({
       token: botToken,
@@ -140,13 +148,18 @@ export class SlackChannel implements Channel {
       // Build content from text + file attachment placeholders
       let content = msg.text || '';
       const files = (
-        msg as { files?: Array<{ name?: string; mimetype?: string }> }
+        msg as { files?: Array<{ name?: string; mimetype?: string; url_private_download?: string; size?: number }> }
       ).files;
+      let documentData: DocumentBlock | null = null;
       if (files?.length) {
         for (const f of files) {
-          const label = f.mimetype?.startsWith('image/') ? 'Image' : 'File';
-          content += `\n[${label}: ${f.name || 'unnamed'}]`;
+          content += `\n[Document: ${f.name || 'unnamed'}]`;
         }
+        // Download first file for container processing (matches WhatsApp pattern)
+        documentData = await this.downloadFile(files[0]);
+        // Additional files: store via document handler (handled by index.ts onMessage)
+        // For now, only the first file is attached as document_data — additional files
+        // get placeholder text only. This matches WhatsApp's behavior.
       }
       if (!content.trim()) return;
 
@@ -277,6 +290,7 @@ export class SlackChannel implements Channel {
         timestamp,
         is_from_me: isBotMessage,
         is_bot_message: isBotMessage,
+        ...(documentData ? { document_data: documentData } : {}),
       });
     });
   }
@@ -456,6 +470,106 @@ export class SlackChannel implements Channel {
     } catch (err) {
       logger.error({ err }, 'Failed to sync Slack channel metadata');
     }
+  }
+
+  /**
+   * Download a file from Slack using url_private_download.
+   * Returns a DocumentBlock matching WhatsApp's format, or null on failure.
+   */
+  private async downloadFile(file: {
+    url_private_download?: string;
+    name?: string;
+    mimetype?: string;
+    size?: number;
+  }): Promise<DocumentBlock | null> {
+    const url = file.url_private_download;
+    if (!url) {
+      logger.debug({ file: file.name }, 'Slack file has no download URL');
+      return null;
+    }
+
+    if (file.size && file.size > MAX_FILE_SIZE) {
+      logger.warn({ file: file.name, size: file.size }, 'Slack file too large, skipping');
+      return null;
+    }
+
+    return new Promise((resolve) => {
+      const req = https.get(url, {
+        headers: { Authorization: `Bearer ${this.botToken}` },
+      }, (res) => {
+        if (res.statusCode === 302 || res.statusCode === 301) {
+          // Follow redirect
+          const redirectUrl = res.headers.location;
+          if (redirectUrl) {
+            https.get(redirectUrl, {
+              headers: { Authorization: `Bearer ${this.botToken}` },
+            }, (redirectRes) => {
+              this.collectResponse(redirectRes, file, resolve);
+            }).on('error', (err) => {
+              logger.error({ err, file: file.name }, 'Failed to download Slack file (redirect)');
+              resolve(null);
+            });
+          } else {
+            resolve(null);
+          }
+          return;
+        }
+
+        this.collectResponse(res, file, resolve);
+      });
+
+      req.on('error', (err) => {
+        logger.error({ err, file: file.name }, 'Failed to download Slack file');
+        resolve(null);
+      });
+    });
+  }
+
+  private collectResponse(
+    res: import('http').IncomingMessage,
+    file: { name?: string; mimetype?: string; size?: number },
+    resolve: (value: DocumentBlock | null) => void,
+  ): void {
+    if (res.statusCode !== 200) {
+      logger.warn({ statusCode: res.statusCode, file: file.name }, 'Slack file download failed');
+      res.resume();
+      resolve(null);
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    let totalSize = 0;
+
+    res.on('data', (chunk: Buffer) => {
+      totalSize += chunk.length;
+      if (totalSize > MAX_FILE_SIZE) {
+        logger.warn({ file: file.name, totalSize }, 'Slack file exceeded size limit during download');
+        res.destroy();
+        resolve(null);
+        return;
+      }
+      chunks.push(chunk);
+    });
+
+    res.on('end', () => {
+      const buffer = Buffer.concat(chunks);
+      const filename = file.name || 'unnamed';
+      const mimetype = file.mimetype || 'application/octet-stream';
+
+      logger.info({ filename, size: buffer.length, mimetype }, 'Downloaded Slack file');
+
+      resolve({
+        type: 'document',
+        media_type: mimetype,
+        data: buffer.toString('base64'),
+        filename,
+      });
+    });
+
+    res.on('error', (err) => {
+      logger.error({ err, file: file.name }, 'Error reading Slack file stream');
+      resolve(null);
+    });
   }
 
   private isAbortCommand(text: string): boolean {

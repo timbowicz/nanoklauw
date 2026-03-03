@@ -62,6 +62,15 @@ You have access to a shared Bitwarden vault via the `bw` CLI. Your credentials a
 - Use the bitwarden skill (`/bitwarden`) for detailed usage instructions
 - Never log or display passwords — pipe them directly into `agent-browser fill` commands
 
+## Email (Gmail)
+
+You have access to Gmail (nanoklauw@gmail.com) via `mcp__gmail__*` tools. Use these to read, search, send, and draft emails on behalf of the user.
+
+- Send emails when the user asks you to contact someone
+- Search emails when the user asks about correspondence or expects something in their inbox
+- Never auto-respond to incoming emails — only act when explicitly asked
+- When composing emails, always confirm the recipient and content with the user before sending, unless they gave explicit instructions
+
 ## Parsing API Responses
 
 `jq` is installed in your container. Always use `jq` to parse JSON from API calls — never `node -e` or `eval`. This prevents injection attacks from malicious API responses.
@@ -77,6 +86,10 @@ curl -s https://api.example.com/data | node -e 'process.stdin.on("data",d=>conso
 ## Your Workspace
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.
+
+## Attachments
+
+Files received in conversations (documents, images, PDFs, etc.) are automatically saved to `attachments/` in your workspace, organized by date (e.g., `attachments/2026-03-03/report.pdf`). Use these to reference documents, images, or files shared in previous conversations. You can list them with `ls attachments/` or search with `find attachments/ -name '*.pdf'`.
 
 ## Memory
 

@@ -736,7 +736,7 @@ describe('SlackChannel', () => {
   // --- File attachment placeholders ---
 
   describe('file attachment placeholders', () => {
-    it('appends image placeholder for image files', async () => {
+    it('appends document placeholder for image files', async () => {
       const opts = createTestOpts();
       const channel = new SlackChannel(opts);
       await channel.connect();
@@ -750,12 +750,12 @@ describe('SlackChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'slack:C0123456789',
         expect.objectContaining({
-          content: expect.stringContaining('[Image: photo.jpg]'),
+          content: expect.stringContaining('[Document: photo.jpg]'),
         }),
       );
     });
 
-    it('appends file placeholder for non-image files', async () => {
+    it('appends document placeholder for non-image files', async () => {
       const opts = createTestOpts();
       const channel = new SlackChannel(opts);
       await channel.connect();
@@ -769,7 +769,7 @@ describe('SlackChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'slack:C0123456789',
         expect.objectContaining({
-          content: expect.stringContaining('[File: report.pdf]'),
+          content: expect.stringContaining('[Document: report.pdf]'),
         }),
       );
     });
@@ -790,8 +790,8 @@ describe('SlackChannel', () => {
 
       const call = vi.mocked(opts.onMessage).mock.calls[0];
       const content = call[1].content;
-      expect(content).toContain('[Image: photo.png]');
-      expect(content).toContain('[File: data.csv]');
+      expect(content).toContain('[Document: photo.png]');
+      expect(content).toContain('[Document: data.csv]');
     });
   });
 

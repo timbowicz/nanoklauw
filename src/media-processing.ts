@@ -9,7 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
 
-import { CONTAINER_GID, CONTAINER_UID, DATA_DIR } from './config.js';
+import { CONTAINER_GID, CONTAINER_UID, DATA_DIR, GROUPS_DIR } from './config.js';
 import { updateMessageContent } from './db.js';
 import { logger } from './logger.js';
 import { DocumentBlock, ImageBlock, NewMessage } from './types.js';
@@ -177,6 +177,62 @@ export async function downloadImage(
   }
 }
 
+// --- Persistent attachment storage ---
+
+/**
+ * Persist a received file to groups/{groupFolder}/attachments/{YYYY-MM-DD}/{filename}.
+ * Handles filename collisions by appending _1, _2, etc.
+ * Sets ownership to container uid for Syncthing and container access.
+ * Never throws — persistence failure must not block message processing.
+ * Returns the relative path (e.g., 'attachments/2026-03-03/report.pdf') or null on failure.
+ */
+export function persistAttachment(
+  groupFolder: string,
+  filename: string,
+  data: Buffer,
+  metadata: { sender: string; timestamp: string },
+): string | null {
+  try {
+    const date = new Date(metadata.timestamp);
+    const dateFolder = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    const attachDir = path.join(GROUPS_DIR, groupFolder, 'attachments', dateFolder);
+    fs.mkdirSync(attachDir, { recursive: true });
+
+    // Sanitize filename: keep original but remove path separators
+    const safeName = filename.replace(/[/\\]/g, '_');
+    const ext = path.extname(safeName);
+    const base = path.basename(safeName, ext);
+
+    // Resolve collisions
+    let finalName = safeName;
+    let counter = 0;
+    while (fs.existsSync(path.join(attachDir, finalName))) {
+      counter++;
+      finalName = `${base}_${counter}${ext}`;
+    }
+
+    const filepath = path.join(attachDir, finalName);
+    fs.writeFileSync(filepath, data);
+
+    // Set ownership so Syncthing (uid 1000) and containers can access
+    try {
+      fs.chownSync(filepath, CONTAINER_UID, CONTAINER_GID);
+    } catch {}
+    // Also chown the date folder and attachments/ parent
+    try {
+      fs.chownSync(attachDir, CONTAINER_UID, CONTAINER_GID);
+      fs.chownSync(path.join(GROUPS_DIR, groupFolder, 'attachments'), CONTAINER_UID, CONTAINER_GID);
+    } catch {}
+
+    const relativePath = `attachments/${dateFolder}/${finalName}`;
+    logger.info({ groupFolder, relativePath, size: data.length }, 'Attachment persisted');
+    return relativePath;
+  } catch (err) {
+    logger.error({ err, groupFolder, filename }, 'Failed to persist attachment');
+    return null;
+  }
+}
+
 export interface ImageRef {
   messageId: string;
   filename: string;
@@ -203,12 +259,20 @@ export function writeImageFiles(
     const filepath = path.join(mediaDir, filename);
 
     try {
-      fs.writeFileSync(filepath, Buffer.from(msg.image_data.data, 'base64'));
+      const imageBuffer = Buffer.from(msg.image_data.data, 'base64');
+      fs.writeFileSync(filepath, imageBuffer);
       // Ensure container user can read the file
       try {
         fs.chownSync(filepath, CONTAINER_UID, CONTAINER_GID);
       } catch {}
       refs.push({ messageId: msg.id, filename });
+
+      // Persist original image to attachments folder
+      const originalFilename = `image_${safeId}.${ext}`;
+      persistAttachment(groupFolder, originalFilename, imageBuffer, {
+        sender: msg.sender_name || msg.sender,
+        timestamp: msg.timestamp,
+      });
     } catch (err) {
       logger.error({ err, messageId: msg.id }, 'Failed to write image file');
     }
@@ -375,7 +439,8 @@ export function writeDocumentFiles(
     const filepath = path.join(mediaDir, filename);
 
     try {
-      fs.writeFileSync(filepath, Buffer.from(msg.document_data.data, 'base64'));
+      const docBuffer = Buffer.from(msg.document_data.data, 'base64');
+      fs.writeFileSync(filepath, docBuffer);
       // Write sidecar with metadata
       fs.writeFileSync(
         `${filepath}.meta.json`,
@@ -392,6 +457,12 @@ export function writeDocumentFiles(
         fs.chownSync(`${filepath}.meta.json`, CONTAINER_UID, CONTAINER_GID);
       } catch {}
       refs.push({ messageId: msg.id, filename });
+
+      // Persist document to attachments folder
+      persistAttachment(groupFolder, msg.document_data.filename, docBuffer, {
+        sender: msg.sender_name || msg.sender,
+        timestamp: msg.timestamp,
+      });
     } catch (err) {
       logger.error({ err, messageId: msg.id }, 'Failed to write document file');
     }
