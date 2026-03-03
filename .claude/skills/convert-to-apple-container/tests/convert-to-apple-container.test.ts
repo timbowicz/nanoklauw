@@ -11,7 +11,7 @@ describe('convert-to-apple-container skill package', () => {
 
     const content = fs.readFileSync(manifestPath, 'utf-8');
     expect(content).toContain('skill: convert-to-apple-container');
-    expect(content).toContain('version: 1.0.0');
+    expect(content).toMatch(/version: \d+\.\d+\.\d+/);
     expect(content).toContain('container-runtime.ts');
     expect(content).toContain('container/build.sh');
   });

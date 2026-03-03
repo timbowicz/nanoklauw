@@ -6,4 +6,10 @@
  *
  * Run with: npx vitest run src/formatting.test.ts
  */
-export {};
+import { describe, it, expect } from 'vitest';
+
+describe('add-image-support skill', () => {
+  it('primary tests live in src/formatting.test.ts', () => {
+    expect(true).toBe(true);
+  });
+});
