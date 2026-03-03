@@ -9,7 +9,12 @@ import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
 
-import { CONTAINER_GID, CONTAINER_UID, DATA_DIR, GROUPS_DIR } from './config.js';
+import {
+  CONTAINER_GID,
+  CONTAINER_UID,
+  DATA_DIR,
+  GROUPS_DIR,
+} from './config.js';
 import { updateMessageContent } from './db.js';
 import { logger } from './logger.js';
 import { DocumentBlock, ImageBlock, NewMessage } from './types.js';
@@ -195,7 +200,12 @@ export function persistAttachment(
   try {
     const date = new Date(metadata.timestamp);
     const dateFolder = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-    const attachDir = path.join(GROUPS_DIR, groupFolder, 'attachments', dateFolder);
+    const attachDir = path.join(
+      GROUPS_DIR,
+      groupFolder,
+      'attachments',
+      dateFolder,
+    );
     fs.mkdirSync(attachDir, { recursive: true });
 
     // Sanitize filename: keep original but remove path separators
@@ -221,14 +231,24 @@ export function persistAttachment(
     // Also chown the date folder and attachments/ parent
     try {
       fs.chownSync(attachDir, CONTAINER_UID, CONTAINER_GID);
-      fs.chownSync(path.join(GROUPS_DIR, groupFolder, 'attachments'), CONTAINER_UID, CONTAINER_GID);
+      fs.chownSync(
+        path.join(GROUPS_DIR, groupFolder, 'attachments'),
+        CONTAINER_UID,
+        CONTAINER_GID,
+      );
     } catch {}
 
     const relativePath = `attachments/${dateFolder}/${finalName}`;
-    logger.info({ groupFolder, relativePath, size: data.length }, 'Attachment persisted');
+    logger.info(
+      { groupFolder, relativePath, size: data.length },
+      'Attachment persisted',
+    );
     return relativePath;
   } catch (err) {
-    logger.error({ err, groupFolder, filename }, 'Failed to persist attachment');
+    logger.error(
+      { err, groupFolder, filename },
+      'Failed to persist attachment',
+    );
     return null;
   }
 }

@@ -148,7 +148,14 @@ export class SlackChannel implements Channel {
       // Build content from text + file attachment placeholders
       let content = msg.text || '';
       const files = (
-        msg as { files?: Array<{ name?: string; mimetype?: string; url_private_download?: string; size?: number }> }
+        msg as {
+          files?: Array<{
+            name?: string;
+            mimetype?: string;
+            url_private_download?: string;
+            size?: number;
+          }>;
+        }
       ).files;
       let documentData: DocumentBlock | null = null;
       if (files?.length) {
@@ -489,34 +496,50 @@ export class SlackChannel implements Channel {
     }
 
     if (file.size && file.size > MAX_FILE_SIZE) {
-      logger.warn({ file: file.name, size: file.size }, 'Slack file too large, skipping');
+      logger.warn(
+        { file: file.name, size: file.size },
+        'Slack file too large, skipping',
+      );
       return null;
     }
 
     return new Promise((resolve) => {
-      const req = https.get(url, {
-        headers: { Authorization: `Bearer ${this.botToken}` },
-      }, (res) => {
-        if (res.statusCode === 302 || res.statusCode === 301) {
-          // Follow redirect
-          const redirectUrl = res.headers.location;
-          if (redirectUrl) {
-            https.get(redirectUrl, {
-              headers: { Authorization: `Bearer ${this.botToken}` },
-            }, (redirectRes) => {
-              this.collectResponse(redirectRes, file, resolve);
-            }).on('error', (err) => {
-              logger.error({ err, file: file.name }, 'Failed to download Slack file (redirect)');
+      const req = https.get(
+        url,
+        {
+          headers: { Authorization: `Bearer ${this.botToken}` },
+        },
+        (res) => {
+          if (res.statusCode === 302 || res.statusCode === 301) {
+            // Follow redirect
+            const redirectUrl = res.headers.location;
+            if (redirectUrl) {
+              https
+                .get(
+                  redirectUrl,
+                  {
+                    headers: { Authorization: `Bearer ${this.botToken}` },
+                  },
+                  (redirectRes) => {
+                    this.collectResponse(redirectRes, file, resolve);
+                  },
+                )
+                .on('error', (err) => {
+                  logger.error(
+                    { err, file: file.name },
+                    'Failed to download Slack file (redirect)',
+                  );
+                  resolve(null);
+                });
+            } else {
               resolve(null);
-            });
-          } else {
-            resolve(null);
+            }
+            return;
           }
-          return;
-        }
 
-        this.collectResponse(res, file, resolve);
-      });
+          this.collectResponse(res, file, resolve);
+        },
+      );
 
       req.on('error', (err) => {
         logger.error({ err, file: file.name }, 'Failed to download Slack file');
@@ -531,7 +554,10 @@ export class SlackChannel implements Channel {
     resolve: (value: DocumentBlock | null) => void,
   ): void {
     if (res.statusCode !== 200) {
-      logger.warn({ statusCode: res.statusCode, file: file.name }, 'Slack file download failed');
+      logger.warn(
+        { statusCode: res.statusCode, file: file.name },
+        'Slack file download failed',
+      );
       res.resume();
       resolve(null);
       return;
@@ -543,7 +569,10 @@ export class SlackChannel implements Channel {
     res.on('data', (chunk: Buffer) => {
       totalSize += chunk.length;
       if (totalSize > MAX_FILE_SIZE) {
-        logger.warn({ file: file.name, totalSize }, 'Slack file exceeded size limit during download');
+        logger.warn(
+          { file: file.name, totalSize },
+          'Slack file exceeded size limit during download',
+        );
         res.destroy();
         resolve(null);
         return;
@@ -556,7 +585,10 @@ export class SlackChannel implements Channel {
       const filename = file.name || 'unnamed';
       const mimetype = file.mimetype || 'application/octet-stream';
 
-      logger.info({ filename, size: buffer.length, mimetype }, 'Downloaded Slack file');
+      logger.info(
+        { filename, size: buffer.length, mimetype },
+        'Downloaded Slack file',
+      );
 
       resolve({
         type: 'document',
