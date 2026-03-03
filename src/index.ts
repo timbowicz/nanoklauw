@@ -320,8 +320,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           typeof result.result === 'string'
             ? result.result
             : JSON.stringify(result.result);
-        // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-        let text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        // Strip internal reasoning blocks — agent uses these for internal reasoning.
+        // Also strip orphaned closing tags that arrive in separate streaming chunks.
+        let text = raw
+          .replace(/<internal>[\s\S]*?<\/internal>/g, '')
+          .replace(/<thinking>[\s\S]*?<\/thinking>/g, '')
+          .replace(/<\/thinking>/g, '')
+          .trim();
 
         // Parse image-description tags, update DB, strip from output
         text = applyImageDescriptions(missedMessages, text, chatJid);

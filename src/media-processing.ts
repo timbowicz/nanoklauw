@@ -537,11 +537,15 @@ export function applyImageDescriptions(
       );
     }
   }
-  // Strip image-description tags from user-facing output
+  // Strip image-description tags from user-facing output.
+  // First strip complete pairs, then strip any unclosed/orphaned tags
+  // (the agent may embed them inside <thinking> blocks that get split).
   return agentOutput
     .replace(
       /<image-description\s+message-id="[^"]*">[\s\S]*?<\/image-description>/g,
       '',
     )
+    .replace(/<image-description\s[^>]*>[\s\S]*/g, '')
+    .replace(/<\/image-description>/g, '')
     .trim();
 }

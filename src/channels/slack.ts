@@ -1,4 +1,3 @@
-import https from 'https';
 import { App, LogLevel } from '@slack/bolt';
 import type { GenericMessageEvent, BotMessageEvent } from '@slack/types';
 
@@ -269,21 +268,19 @@ export class SlackChannel implements Channel {
         content = `@${ASSISTANT_NAME} ${content}`;
       }
 
-      // Track trigger timestamp for threading replies.
-      // - @mention in main channel → thread under that message
-      // - any trigger in a thread → reply in that thread
-      // - trigger pattern (no @mention) in main channel → reply in channel
-      const willTrigger =
-        mentioned ||
-        (!isBotMessage && threadTs && this.botActiveThreads.has(threadTs)) ||
-        TRIGGER_PATTERN.test(content);
-
-      if (willTrigger && msg.ts) {
+      // Track reply context for ALL non-bot messages so the response always
+      // goes to the right place.  Previously this was gated on `willTrigger`,
+      // which meant main-group messages (no trigger needed) kept stale thread
+      // context and the bot replied in an old thread.
+      if (!isBotMessage && msg.ts) {
         if (mentioned && !threadTs) {
+          // @mention in main channel → create new thread under this message
           this.lastTriggerTs.set(jid, msg.ts);
         } else if (threadTs) {
+          // Message in a thread → reply in that thread
           this.lastTriggerTs.set(jid, threadTs);
         } else {
+          // Plain message in main channel → reply in channel (no thread)
           this.lastTriggerTs.delete(jid);
         }
       }
@@ -482,6 +479,10 @@ export class SlackChannel implements Channel {
   /**
    * Download a file from Slack using url_private_download.
    * Returns a DocumentBlock matching WhatsApp's format, or null on failure.
+   *
+   * Uses fetch() for reliable redirect handling — Slack's download URLs
+   * often redirect to CDN endpoints. The manual https.get approach was
+   * returning HTML error pages instead of file content.
    */
   private async downloadFile(file: {
     url_private_download?: string;
@@ -503,105 +504,78 @@ export class SlackChannel implements Channel {
       return null;
     }
 
-    return new Promise((resolve) => {
-      const req = https.get(
-        url,
-        {
-          headers: { Authorization: `Bearer ${this.botToken}` },
-        },
-        (res) => {
-          if (res.statusCode === 302 || res.statusCode === 301) {
-            // Follow redirect
-            const redirectUrl = res.headers.location;
-            if (redirectUrl) {
-              https
-                .get(
-                  redirectUrl,
-                  {
-                    headers: { Authorization: `Bearer ${this.botToken}` },
-                  },
-                  (redirectRes) => {
-                    this.collectResponse(redirectRes, file, resolve);
-                  },
-                )
-                .on('error', (err) => {
-                  logger.error(
-                    { err, file: file.name },
-                    'Failed to download Slack file (redirect)',
-                  );
-                  resolve(null);
-                });
-            } else {
-              resolve(null);
-            }
-            return;
-          }
-
-          this.collectResponse(res, file, resolve);
-        },
-      );
-
-      req.on('error', (err) => {
-        logger.error({ err, file: file.name }, 'Failed to download Slack file');
-        resolve(null);
+    try {
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${this.botToken}` },
+        redirect: 'follow',
       });
-    });
-  }
 
-  private collectResponse(
-    res: import('http').IncomingMessage,
-    file: { name?: string; mimetype?: string; size?: number },
-    resolve: (value: DocumentBlock | null) => void,
-  ): void {
-    if (res.statusCode !== 200) {
-      logger.warn(
-        { statusCode: res.statusCode, file: file.name },
-        'Slack file download failed',
-      );
-      res.resume();
-      resolve(null);
-      return;
-    }
-
-    const chunks: Buffer[] = [];
-    let totalSize = 0;
-
-    res.on('data', (chunk: Buffer) => {
-      totalSize += chunk.length;
-      if (totalSize > MAX_FILE_SIZE) {
+      if (!res.ok) {
         logger.warn(
-          { file: file.name, totalSize },
-          'Slack file exceeded size limit during download',
+          { statusCode: res.status, file: file.name, url },
+          'Slack file download failed',
         );
-        res.destroy();
-        resolve(null);
-        return;
+        return null;
       }
-      chunks.push(chunk);
-    });
 
-    res.on('end', () => {
-      const buffer = Buffer.concat(chunks);
+      const arrayBuffer = await res.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      if (buffer.length > MAX_FILE_SIZE) {
+        logger.warn(
+          { file: file.name, size: buffer.length },
+          'Slack file exceeded size limit',
+        );
+        return null;
+      }
+
       const filename = file.name || 'unnamed';
       const mimetype = file.mimetype || 'application/octet-stream';
+
+      // Validate content: downloads can silently return HTML error pages.
+      const contentType = res.headers.get('content-type') || '';
+      if (
+        contentType.includes('text/html') ||
+        buffer.subarray(0, 15).toString('ascii').startsWith('<!DOCTYPE')
+      ) {
+        logger.warn(
+          { filename, size: buffer.length, contentType },
+          'Slack file download returned HTML instead of file content',
+        );
+        return null;
+      }
+
+      // Extra PDF validation: check magic bytes
+      if (mimetype === 'application/pdf') {
+        const header = buffer.subarray(0, 5).toString('ascii');
+        if (header !== '%PDF-') {
+          logger.warn(
+            {
+              filename,
+              size: buffer.length,
+              headerHex: buffer.subarray(0, 16).toString('hex'),
+            },
+            'Downloaded Slack file is not a valid PDF (missing %PDF- header)',
+          );
+          return null;
+        }
+      }
 
       logger.info(
         { filename, size: buffer.length, mimetype },
         'Downloaded Slack file',
       );
 
-      resolve({
+      return {
         type: 'document',
         media_type: mimetype,
         data: buffer.toString('base64'),
         filename,
-      });
-    });
-
-    res.on('error', (err) => {
-      logger.error({ err, file: file.name }, 'Error reading Slack file stream');
-      resolve(null);
-    });
+      };
+    } catch (err) {
+      logger.error({ err, file: file.name }, 'Failed to download Slack file');
+      return null;
+    }
   }
 
   private isAbortCommand(text: string): boolean {
