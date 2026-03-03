@@ -15,15 +15,28 @@ describe('slack skill package', () => {
   });
 
   it('has all files declared in adds', () => {
-    const addFile = path.join(skillDir, 'add', 'src', 'channels', 'slack.ts');
-    expect(fs.existsSync(addFile)).toBe(true);
+    const channelFile = path.join(
+      skillDir,
+      'add',
+      'src',
+      'channels',
+      'slack.ts',
+    );
+    expect(fs.existsSync(channelFile)).toBe(true);
 
-    const content = fs.readFileSync(addFile, 'utf-8');
+    const content = fs.readFileSync(channelFile, 'utf-8');
     expect(content).toContain('class SlackChannel');
     expect(content).toContain('implements Channel');
+    expect(content).toContain("registerChannel('slack'");
 
     // Test file for the channel
-    const testFile = path.join(skillDir, 'add', 'src', 'channels', 'slack.test.ts');
+    const testFile = path.join(
+      skillDir,
+      'add',
+      'src',
+      'channels',
+      'slack.test.ts',
+    );
     expect(fs.existsSync(testFile)).toBe(true);
 
     const testContent = fs.readFileSync(testFile, 'utf-8');

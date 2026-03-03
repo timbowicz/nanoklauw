@@ -116,7 +116,7 @@ For manual control, use the IPC register flow. The JID format is `slack:<channel
 ```typescript
 registerGroup("slack:<channel-id>", {
   name: "<channel-name>",
-  folder: "<folder-name>",
+  folder: "slack_<channel-name>",
   trigger: `@${ASSISTANT_NAME}`,
   added_at: new Date().toISOString(),
   requiresTrigger: true,
