@@ -190,8 +190,8 @@ describe('SlackChannel', () => {
       expect(shouldIgnoreSlackMessageSubtype('bot_message')).toBe(false);
     });
 
-    it('returns false for file_share subtype', () => {
-      expect(shouldIgnoreSlackMessageSubtype('file_share')).toBe(false);
+    it('returns true for file_share subtype (duplicate of regular message)', () => {
+      expect(shouldIgnoreSlackMessageSubtype('file_share')).toBe(true);
     });
 
     it('returns true for channel_join subtype', () => {

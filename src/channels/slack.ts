@@ -30,18 +30,23 @@ const MAX_FILE_SIZE = 25 * 1024 * 1024;
 const MAX_OUTGOING_QUEUE = 100;
 
 // The message subtypes we process. Bolt delivers all subtypes via app.event('message');
-// we filter to regular messages (GenericMessageEvent, subtype undefined), bot messages
-// (BotMessageEvent, subtype 'bot_message'), and file_share messages so we can note attachments.
+// we filter to regular messages (GenericMessageEvent, subtype undefined) and bot messages
+// (BotMessageEvent, subtype 'bot_message'). File uploads arrive as regular messages with
+// a files[] array — the separate file_share event is a duplicate and must be ignored.
 type HandledMessageEvent = GenericMessageEvent | BotMessageEvent;
 
 /**
  * Returns true if the given subtype should be silently dropped.
- * Regular messages (no subtype), bot_message, and file_share are allowed through;
- * everything else (channel_join, channel_leave, etc.) is ignored.
+ * Regular messages (no subtype) and bot_message are allowed through;
+ * everything else (channel_join, channel_leave, file_share, etc.) is ignored.
+ *
+ * Note: file_share is dropped because Slack sends BOTH a regular message event
+ * (subtype undefined, with files[] attached) AND a file_share event for the same
+ * upload. Allowing both causes duplicate file downloads and double persistence.
  */
 export function shouldIgnoreSlackMessageSubtype(subtype?: string): boolean {
   if (!subtype) return false;
-  if (subtype === 'bot_message' || subtype === 'file_share') return false;
+  if (subtype === 'bot_message') return false;
   return true;
 }
 
