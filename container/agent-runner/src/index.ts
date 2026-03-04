@@ -203,17 +203,17 @@ function createPreCompactHook(assistantName?: string): HookCallback {
 }
 
 // Secrets to strip from Bash tool subprocess environments.
-// These are needed by claude-code for API auth but should never
-// be visible to commands Kit runs.
-const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
-
-function createSanitizeBashHook(): HookCallback {
+// Derived dynamically from the secrets passed by the host via stdin,
+// so any secret added to CONTAINER_SECRETS in config.ts is automatically
+// protected here without maintaining a separate list.
+// See: https://github.com/qwibitai/nanoclaw/issues/709
+function createSanitizeBashHook(secretKeys: string[]): HookCallback {
   return async (input, _toolUseId, _context) => {
     const preInput = input as PreToolUseHookInput;
     const command = (preInput.tool_input as { command?: string })?.command;
-    if (!command) return {};
+    if (!command || secretKeys.length === 0) return {};
 
-    const unsetPrefix = `unset ${SECRET_ENV_VARS.join(' ')} 2>/dev/null; `;
+    const unsetPrefix = `unset ${secretKeys.join(' ')} 2>/dev/null; `;
     return {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
@@ -626,7 +626,7 @@ async function runQuery(
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
-        PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
+        PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook(Object.keys(containerInput.secrets || {}))] }],
       },
     }
   })) {
