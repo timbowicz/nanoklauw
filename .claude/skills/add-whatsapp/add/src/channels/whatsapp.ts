@@ -252,115 +252,74 @@ export class WhatsAppChannel implements Channel {
 
     this.sock.ev.on('messages.upsert', async ({ messages }) => {
       for (const msg of messages) {
-        if (!msg.message) continue;
-        // Unwrap container types (viewOnceMessageV2, ephemeralMessage,
-        // editedMessage, etc.) so that conversation, extendedTextMessage,
-        // imageMessage, etc. are accessible at the top level.
-        const normalized = normalizeMessageContent(msg.message);
-        if (!normalized) continue;
-        const rawJid = msg.key.remoteJid;
-        if (!rawJid || rawJid === 'status@broadcast') continue;
+        try {
+          if (!msg.message) continue;
+          // Unwrap container types (viewOnceMessageV2, ephemeralMessage,
+          // editedMessage, etc.) so that conversation, extendedTextMessage,
+          // imageMessage, etc. are accessible at the top level.
+          const normalized = normalizeMessageContent(msg.message);
+          if (!normalized) continue;
+          const rawJid = msg.key.remoteJid;
+          if (!rawJid || rawJid === 'status@broadcast') continue;
 
-        // Handle reactions: deliver as approval responses for pending proxy requests.
-        // Reactions have reactionMessage with .key (original message) and .text (emoji).
-        const reaction = msg.message?.reactionMessage;
-        if (reaction?.key?.id && reaction.text) {
-          const emoji = reaction.text;
-          const isApproval = ['👍', '✅', '👌'].includes(emoji);
-          const isDenial = ['👎', '❌', '🚫'].includes(emoji);
-          if (isApproval || isDenial) {
-            this.opts.onReaction?.(reaction.key.id, isApproval);
-          }
-          continue;
-        }
+          // Translate LID JID to phone JID if applicable
+          const chatJid = await this.translateJid(rawJid);
 
-        // Translate LID JID to phone JID if applicable
-        const chatJid = await this.translateJid(rawJid);
+          const timestamp = new Date(
+            Number(msg.messageTimestamp) * 1000,
+          ).toISOString();
 
-        const timestamp = new Date(
-          Number(msg.messageTimestamp) * 1000,
-        ).toISOString();
-
-        // Always notify about chat metadata for group discovery
-        const isGroup = chatJid.endsWith('@g.us');
-        this.opts.onChatMetadata(
-          chatJid,
-          timestamp,
-          undefined,
-          'whatsapp',
-          isGroup,
-        );
-
-        // Only deliver full message for registered groups
-        const groups = this.opts.registeredGroups();
-        if (groups[chatJid]) {
-          const hasImage = !!normalized.imageMessage;
-          const hasDocument = !!normalized.documentMessage;
-          const documentFilename =
-            normalized.documentMessage?.fileName || 'document';
-          let content =
-            normalized.conversation ||
-            normalized.extendedTextMessage?.text ||
-            normalized.imageMessage?.caption ||
-            normalized.videoMessage?.caption ||
-            normalized.documentMessage?.caption ||
-            (hasImage ? '[Image]' : '') ||
-            (hasDocument ? `[Document: ${documentFilename}]` : '');
-
-          // WhatsApp sends @mentions as LID numbers (e.g. @199768257069133)
-          // instead of display names. Replace the bot's own LID mention with
-          // @AssistantName so the trigger pattern can match.
-          if (this.sock.user?.lid) {
-            const lidUser = this.sock.user.lid.split(':')[0];
-            if (lidUser) {
-              content = content.replace(
-                new RegExp(`@${lidUser}\\b`, 'g'),
-                `@${ASSISTANT_NAME}`,
-              );
-            }
-          }
-
-          // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
-          if (!content) continue;
-
-          const sender = msg.key.participant || msg.key.remoteJid || '';
-          const senderName = msg.pushName || sender.split('@')[0];
-
-          const fromMe = msg.key.fromMe || false;
-          // Detect bot messages: with own number, fromMe is reliable
-          // since only the bot sends from that number.
-          // With shared number, bot messages carry the assistant name prefix
-          // (even in DMs/self-chat) so we check for that.
-          const isBotMessage = ASSISTANT_HAS_OWN_NUMBER
-            ? fromMe
-            : content.startsWith(`${ASSISTANT_NAME}:`);
-
-          // Extract quoted message ID for reply correlation (network proxy approvals)
-          const quotedMessageId =
-            msg.message?.extendedTextMessage?.contextInfo?.stanzaId ||
-            undefined;
-
-          // Download media if present (non-blocking — failure just skips the media)
-          const imageData = hasImage
-            ? await downloadImage(msg, this.sock)
-            : null;
-          const documentData = hasDocument
-            ? await downloadDocument(msg, this.sock)
-            : null;
-
-          this.opts.onMessage(chatJid, {
-            id: msg.key.id || '',
-            chat_jid: chatJid,
-            sender,
-            sender_name: senderName,
-            content,
+          // Always notify about chat metadata for group discovery
+          const isGroup = chatJid.endsWith('@g.us');
+          this.opts.onChatMetadata(
+            chatJid,
             timestamp,
-            is_from_me: fromMe,
-            is_bot_message: isBotMessage,
-            ...(quotedMessageId ? { quotedMessageId } : {}),
-            ...(imageData ? { image_data: imageData } : {}),
-            ...(documentData ? { document_data: documentData } : {}),
-          });
+            undefined,
+            'whatsapp',
+            isGroup,
+          );
+
+          // Only deliver full message for registered groups
+          const groups = this.opts.registeredGroups();
+          if (groups[chatJid]) {
+            const content =
+              normalized.conversation ||
+              normalized.extendedTextMessage?.text ||
+              normalized.imageMessage?.caption ||
+              normalized.videoMessage?.caption ||
+              '';
+
+            // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
+            if (!content) continue;
+
+            const sender = msg.key.participant || msg.key.remoteJid || '';
+            const senderName = msg.pushName || sender.split('@')[0];
+
+            const fromMe = msg.key.fromMe || false;
+            // Detect bot messages: with own number, fromMe is reliable
+            // since only the bot sends from that number.
+            // With shared number, bot messages carry the assistant name prefix
+            // (even in DMs/self-chat) so we check for that.
+            const isBotMessage = ASSISTANT_HAS_OWN_NUMBER
+              ? fromMe
+              : content.startsWith(`${ASSISTANT_NAME}:`);
+
+            this.opts.onMessage(chatJid, {
+              id: msg.key.id || '',
+              chat_jid: chatJid,
+              sender,
+              sender_name: senderName,
+              content,
+              timestamp,
+              is_from_me: fromMe,
+              is_bot_message: isBotMessage,
+            });
+          }
+        } catch (err) {
+          logger.error(
+            { err, remoteJid: msg.key?.remoteJid },
+            'Error processing incoming message',
+          );
         }
       }
     });
