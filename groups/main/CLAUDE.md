@@ -29,10 +29,6 @@ jq . malformed.json # fails with clear error if invalid
 
 Prefer `jq` over `node -e` for JSON operations — it has no code execution risk.
 
-## Timezone
-
-Your system clock is set to Europe/Amsterdam (CET/CEST). When asked for the current time or date, always use `date` to get the correct local time — do NOT rely on any date injected in your system prompt, as that may be in UTC.
-
 ## Communication
 
 Your output is sent to the user or group.
