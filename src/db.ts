@@ -500,7 +500,12 @@ export function getNewMessages(
 
   const rows = db
     .prepare(sql)
-    .all(lastTimestamp, ...jids, `${botPrefix}:%`, MAX_MESSAGES_PER_QUERY) as NewMessage[];
+    .all(
+      lastTimestamp,
+      ...jids,
+      `${botPrefix}:%`,
+      MAX_MESSAGES_PER_QUERY,
+    ) as NewMessage[];
 
   let newTimestamp = lastTimestamp;
   for (const row of rows) {
@@ -530,7 +535,12 @@ export function getMessagesSince(
   `;
   return db
     .prepare(sql)
-    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, MAX_MESSAGES_PER_QUERY) as NewMessage[];
+    .all(
+      chatJid,
+      sinceTimestamp,
+      `${botPrefix}:%`,
+      MAX_MESSAGES_PER_QUERY,
+    ) as NewMessage[];
 }
 
 // --- Reaction accessors ---
