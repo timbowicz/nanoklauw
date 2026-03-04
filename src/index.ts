@@ -14,6 +14,7 @@ import {
   CONTAINER_IMAGE,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
+  TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
 import { readEnvFile } from './env.js';
@@ -250,7 +251,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     missedMessages,
   );
 
-  const prompt = formatMessages(missedMessages);
+  const prompt = formatMessages(missedMessages, TIMEZONE);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -602,7 +603,7 @@ async function startMessageLoop(): Promise<void> {
           imageHandler.peekAttachToMessages(messagesToSend);
           documentHandler.peekAttachToMessages(messagesToSend);
 
-          const formatted = formatMessages(messagesToSend);
+          const formatted = formatMessages(messagesToSend, TIMEZONE);
 
           // Try to pipe to an active container
           const hasImages = messagesToSend.some((m) => m.image_data);
@@ -751,11 +752,7 @@ async function main(): Promise<void> {
   const channelOpts: ChannelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
       // Sender allowlist drop mode: discard messages from denied senders before storing
-      if (
-        !msg.is_from_me &&
-        !msg.is_bot_message &&
-        registeredGroups[chatJid]
-      ) {
+      if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid]) {
         const cfg = loadSenderAllowlist();
         if (
           shouldDropMessage(chatJid, cfg) &&

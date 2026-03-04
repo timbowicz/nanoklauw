@@ -1,4 +1,5 @@
 import { Channel, NewMessage } from './types.js';
+import { formatCurrentTime, formatLocalTime } from './timezone.js';
 
 export function escapeXml(s: string): string {
   if (!s) return '';
@@ -9,19 +10,26 @@ export function escapeXml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-export function formatMessages(messages: NewMessage[]): string {
+export function formatMessages(
+  messages: NewMessage[],
+  timezone: string,
+): string {
   const lines = messages.map((m) => {
+    const displayTime = formatLocalTime(m.timestamp, timezone);
     const attrs = [
       `id="${escapeXml(m.id)}"`,
       `sender="${escapeXml(m.sender_name)}"`,
-      `time="${m.timestamp}"`,
+      `time="${escapeXml(displayTime)}"`,
     ];
     if (m.image_data) attrs.push('has-image="true"');
     if (m.document_data)
       attrs.push(`has-document="${escapeXml(m.document_data.filename)}"`);
     return `<message ${attrs.join(' ')}>${escapeXml(m.content)}</message>`;
   });
-  return `<messages>\n${lines.join('\n')}\n</messages>`;
+
+  const header = `<context timezone="${escapeXml(timezone)}" current_time="${escapeXml(formatCurrentTime(timezone))}" />\n`;
+
+  return `${header}<messages>\n${lines.join('\n')}\n</messages>`;
 }
 
 export function stripInternalTags(text: string): string {
