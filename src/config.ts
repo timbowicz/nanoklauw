@@ -15,6 +15,10 @@ export const ASSISTANT_HAS_OWN_NUMBER =
     envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
 export const MAIN_GROUP_FOLDER = 'main';
 export const POLL_INTERVAL = 2000;
+export const MAX_MESSAGES_PER_QUERY = parseInt(
+  process.env.MAX_MESSAGES_PER_QUERY || '200',
+  10,
+);
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
 // Absolute paths needed for container mounts
