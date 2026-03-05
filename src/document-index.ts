@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { watch, type FSWatcher } from 'chokidar';
 
 import { getDb } from './db.js';
 import { logger } from './logger.js';
@@ -511,9 +512,7 @@ export async function searchDocumentsVec(
   // Join with chunk and document data
   const placeholders = vecResults.map(() => '?').join(',');
   const chunkIds = vecResults.map((r) => r.chunk_id);
-  const distanceMap = new Map(
-    vecResults.map((r) => [r.chunk_id, r.distance]),
-  );
+  const distanceMap = new Map(vecResults.map((r) => [r.chunk_id, r.distance]));
 
   const rows = db
     .prepare(
@@ -655,6 +654,106 @@ export function buildDocumentSnapshot(groupFolder: string): {
     total_chunks: totalChunks,
     last_sync: new Date().toISOString(),
   };
+}
+
+// ---- File Watcher ----
+
+let fileWatcher: FSWatcher | null = null;
+const indexQueue = new Map<string, NodeJS.Timeout>(); // debounce map
+const MAX_CONCURRENT_INDEX = 3;
+let activeIndexing = 0;
+const pendingIndex: Array<{ filePath: string; groupFolder: string }> = [];
+
+export function startFileWatcher(groupsDir: string): void {
+  if (fileWatcher) {
+    logger.debug('File watcher already running');
+    return;
+  }
+
+  fileWatcher = watch(path.join(groupsDir, '**', '*'), {
+    ignored: ['**/node_modules/**', '**/.git/**', '**/logs/**', '**/.*'],
+    persistent: true,
+    ignoreInitial: false, // Index existing files at startup
+    awaitWriteFinish: { stabilityThreshold: 2000 },
+    depth: 10,
+  });
+
+  fileWatcher.on('add', (filePath) => enqueueIndex(filePath, groupsDir));
+  fileWatcher.on('change', (filePath) => enqueueIndex(filePath, groupsDir));
+  fileWatcher.on('unlink', (filePath) => {
+    const groupFolder = extractGroupFolder(filePath, groupsDir);
+    if (groupFolder) {
+      removeFromIndex(filePath, groupFolder);
+    }
+  });
+  fileWatcher.on('error', (err) => logger.error({ err }, 'File watcher error'));
+
+  logger.info({ groupsDir }, 'Document file watcher started');
+}
+
+export function stopFileWatcher(): void {
+  if (fileWatcher) {
+    fileWatcher.close();
+    fileWatcher = null;
+    logger.info('Document file watcher stopped');
+  }
+  for (const timer of indexQueue.values()) {
+    clearTimeout(timer);
+  }
+  indexQueue.clear();
+}
+
+function enqueueIndex(filePath: string, groupsDir: string): void {
+  if (!shouldIndex(filePath)) return;
+
+  const groupFolder = extractGroupFolder(filePath, groupsDir);
+  if (!groupFolder) return;
+
+  // Debounce: cancel any pending index for this file
+  const existing = indexQueue.get(filePath);
+  if (existing) clearTimeout(existing);
+
+  const timer = setTimeout(() => {
+    indexQueue.delete(filePath);
+    processIndexQueue(filePath, groupFolder);
+  }, 500); // Additional debounce on top of chokidar's awaitWriteFinish
+
+  indexQueue.set(filePath, timer);
+}
+
+async function processIndexQueue(
+  filePath: string,
+  groupFolder: string,
+): Promise<void> {
+  if (activeIndexing >= MAX_CONCURRENT_INDEX) {
+    pendingIndex.push({ filePath, groupFolder });
+    return;
+  }
+
+  activeIndexing++;
+  try {
+    await indexFile(filePath, groupFolder);
+  } catch (err) {
+    logger.error({ filePath, groupFolder, err }, 'Error indexing file');
+  } finally {
+    activeIndexing--;
+    // Process next in queue
+    const next = pendingIndex.shift();
+    if (next) {
+      processIndexQueue(next.filePath, next.groupFolder);
+    }
+  }
+}
+
+function extractGroupFolder(
+  filePath: string,
+  groupsDir: string,
+): string | null {
+  const relative = path.relative(groupsDir, filePath);
+  if (relative.startsWith('..')) return null;
+  const parts = relative.split(path.sep);
+  if (parts.length < 2) return null; // File must be inside a group folder
+  return parts[0];
 }
 
 export {

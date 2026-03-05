@@ -193,9 +193,8 @@ describe('document index - search', () => {
   });
 
   it('buildDocumentContext returns XML with indexed chunks', async () => {
-    const { indexFile, buildDocumentContext } = await import(
-      './document-index.js'
-    );
+    const { indexFile, buildDocumentContext } =
+      await import('./document-index.js');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docindex-'));
     const tmpFile = path.join(tmpDir, 'info.md');
     fs.writeFileSync(tmpFile, '# Project Info\n\nThe deadline is March 15th.');
@@ -214,9 +213,8 @@ describe('document index - search', () => {
   });
 
   it('buildDocumentSnapshot returns correct structure', async () => {
-    const { indexFile, buildDocumentSnapshot } = await import(
-      './document-index.js'
-    );
+    const { indexFile, buildDocumentSnapshot } =
+      await import('./document-index.js');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docindex-'));
     const tmpFile = path.join(tmpDir, 'notes.txt');
     fs.writeFileSync(tmpFile, 'Some notes here.');
@@ -229,5 +227,13 @@ describe('document index - search', () => {
     expect(snapshot.total_chunks).toBeGreaterThan(0);
 
     fs.rmSync(tmpDir, { recursive: true });
+  });
+});
+
+describe('document index - file watcher', () => {
+  it('exports startFileWatcher and stopFileWatcher', async () => {
+    const mod = await import('./document-index.js');
+    expect(typeof mod.startFileWatcher).toBe('function');
+    expect(typeof mod.stopFileWatcher).toBe('function');
   });
 });
