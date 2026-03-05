@@ -582,7 +582,8 @@ function buildKeywordContext(
     .map(() => "LOWER(dc.content) LIKE ? ESCAPE '\\'")
     .join(' OR ');
   const params = keywords.map(
-    (k) => `%${k.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')}%`,
+    (k) =>
+      `%${k.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')}%`,
   );
 
   const rows = db
@@ -784,9 +785,7 @@ export async function syncGoogleWorkspace(
   let config: GwsSyncConfig;
   try {
     const yaml = await import('yaml');
-    config = yaml.parse(
-      fs.readFileSync(configPath, 'utf-8'),
-    ) as GwsSyncConfig;
+    config = yaml.parse(fs.readFileSync(configPath, 'utf-8')) as GwsSyncConfig;
   } catch (err) {
     logger.warn({ groupFolder, err }, 'Failed to parse document-index.yaml');
     return;

@@ -18,10 +18,7 @@ import {
   getTaskById,
   updateTask,
 } from './db.js';
-import {
-  indexFile,
-  searchDocumentsVec,
-} from './document-index.js';
+import { indexFile, searchDocumentsVec } from './document-index.js';
 import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { Channel, RegisteredGroup, SendMessageOpts } from './types.js';
@@ -944,7 +941,10 @@ export async function processTaskIpc(
           );
           break;
         }
-        const topK = Math.min(Math.max(Number((data as any).top_k) || 5, 1), 50);
+        const topK = Math.min(
+          Math.max(Number((data as any).top_k) || 5, 1),
+          50,
+        );
         try {
           const results = await searchDocumentsVec(
             sourceGroup,

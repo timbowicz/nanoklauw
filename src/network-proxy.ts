@@ -84,7 +84,10 @@ function writeProxyResponse(
   };
 
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(requestId)) {
-    logger.warn({ requestId, groupFolder }, 'writeProxyResponse: invalid requestId, rejected');
+    logger.warn(
+      { requestId, groupFolder },
+      'writeProxyResponse: invalid requestId, rejected',
+    );
     return;
   }
   const filename = `proxy-response-${requestId}.json`;
