@@ -1,0 +1,20 @@
+skill: google-workspace
+version: 1.0.0
+description: "Google Workspace integration (Sheets, Drive, Docs, Gmail) via official gws CLI"
+core_version: 0.1.0
+adds:
+  - container/skills/gws-shared/SKILL.md
+  - container/skills/gws-sheets/SKILL.md
+  - container/skills/gws-drive/SKILL.md
+  - container/skills/gws-docs/SKILL.md
+  - container/skills/gws-gmail/SKILL.md
+modifies:
+  - container/Dockerfile
+  - src/container-runner.ts
+structured:
+  npm_dependencies: {}
+  env_additions: []
+conflicts:
+  - gmail
+depends: []
+test: "docker run --rm nanoclaw-agent:latest gws --version"
