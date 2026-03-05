@@ -6,7 +6,13 @@ import path from 'path';
 import { promisify } from 'util';
 import { watch, type FSWatcher } from 'chokidar';
 
-import { getDb } from './db.js';
+import { getDb, isSqliteVecLoaded } from './db.js';
+import {
+  embed,
+  isEmbeddingModelLoaded,
+  loadEmbeddingModel,
+  EMBEDDING_DIM,
+} from './embeddings.js';
 import { logger } from './logger.js';
 
 const execFileAsync = promisify(execFile);
@@ -50,7 +56,6 @@ export interface SearchResult {
 const CHUNK_SIZE = 2000; // ~500 tokens
 const CHUNK_OVERLAP = 400; // ~100 tokens
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-const EMBEDDING_DIM = 384; // all-MiniLM-L6-v2
 
 const SUPPORTED_EXTENSIONS = new Set([
   '.md',
@@ -66,7 +71,6 @@ const IGNORED_DIRS = new Set(['node_modules', '.git', 'logs', '.claude']);
 
 // ---- State ----
 
-let embeddingPipeline: any = null;
 let vecTableInitialized = false;
 
 // ---- Initialization ----
@@ -78,12 +82,9 @@ export async function initDocumentIndex(opts?: {
   const db = getDb();
 
   // Create the sqlite-vec virtual table if it doesn't exist
-  if (!opts?.skipVec && !vecTableInitialized) {
+  // sqlite-vec extension is loaded once in db.ts initDatabase()
+  if (!opts?.skipVec && !vecTableInitialized && isSqliteVecLoaded()) {
     try {
-      // Load sqlite-vec extension
-      const sqliteVec = await import('sqlite-vec');
-      sqliteVec.load(db);
-
       db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_vec USING vec0(
           chunk_id TEXT PRIMARY KEY,
@@ -102,34 +103,9 @@ export async function initDocumentIndex(opts?: {
   }
 
   // Load embedding model (skip in tests)
-  if (!opts?.skipModel && !embeddingPipeline) {
+  if (!opts?.skipModel && !isEmbeddingModelLoaded()) {
     await loadEmbeddingModel();
   }
-}
-
-async function loadEmbeddingModel(): Promise<void> {
-  const { pipeline } = await import('@huggingface/transformers');
-  embeddingPipeline = await pipeline(
-    'feature-extraction',
-    'Xenova/all-MiniLM-L6-v2',
-    {
-      cache_dir: path.join(process.cwd(), 'data', 'models'),
-    },
-  );
-  logger.info('Embedding model loaded for document index');
-}
-
-// ---- Embedding ----
-
-export async function embed(text: string): Promise<Float32Array> {
-  if (!embeddingPipeline) {
-    await loadEmbeddingModel();
-  }
-  const output = await embeddingPipeline(text, {
-    pooling: 'mean',
-    normalize: true,
-  });
-  return new Float32Array(output.data);
 }
 
 // ---- Hashing ----
@@ -413,7 +389,7 @@ export async function indexFile(
   insertMany(chunks);
 
   // Embed chunks (skip in tests or when model not loaded)
-  if (!opts?.skipEmbedding && embeddingPipeline && vecTableInitialized) {
+  if (!opts?.skipEmbedding && isEmbeddingModelLoaded() && vecTableInitialized) {
     await embedChunks(docId);
   }
 
@@ -494,7 +470,7 @@ export async function searchDocumentsVec(
   query: string,
   topK: number = 5,
 ): Promise<SearchResult[]> {
-  if (!vecTableInitialized || !embeddingPipeline) {
+  if (!vecTableInitialized || !isEmbeddingModelLoaded()) {
     return [];
   }
 

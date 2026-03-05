@@ -21,6 +21,12 @@ import {
 import { indexFile, searchDocumentsVec } from './document-index.js';
 import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
+import {
+  addCoreMemoryWithEmbedding,
+  updateCoreMemoryWithEmbedding,
+  removeCoreMemory,
+  searchAllMemory,
+} from './memory.js';
 import { Channel, RegisteredGroup, SendMessageOpts } from './types.js';
 
 export interface IpcDeps {
@@ -404,6 +410,19 @@ function cleanupStaleIpcTasks(ipcBaseDir: string): void {
         }
       }
 
+      // Clean stale memory request files
+      const memoryDir = path.join(ipcBaseDir, group, 'memory');
+      if (fs.existsSync(memoryDir)) {
+        for (const file of fs.readdirSync(memoryDir)) {
+          if (file.endsWith('.json')) {
+            try {
+              fs.unlinkSync(path.join(memoryDir, file));
+              tasksCleaned++;
+            } catch {}
+          }
+        }
+      }
+
       // Clean stale proxy responses that were never consumed
       const inputDir = path.join(ipcBaseDir, group, 'input');
       if (fs.existsSync(inputDir)) {
@@ -594,6 +613,36 @@ export function startIpcWatcher(deps: IpcDeps): void {
         }
       } catch (err) {
         logger.error({ err, sourceGroup }, 'Error reading IPC tasks directory');
+      }
+
+      // Process memory operations from this group's IPC directory
+      const memoryDir = path.join(ipcBaseDir, sourceGroup, 'memory');
+      try {
+        if (fs.existsSync(memoryDir)) {
+          const memoryFiles = listIpcJsonFiles(memoryDir).filter(
+            (f) => !f.startsWith('res-'),
+          );
+          for (const file of memoryFiles) {
+            const filePath = path.join(memoryDir, file);
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const data = readIpcJsonFile(filePath) as any;
+              await processMemoryIpc(data, sourceGroup);
+              fs.unlinkSync(filePath);
+            } catch (err) {
+              logger.error(
+                { file, sourceGroup, err },
+                'Error processing IPC memory',
+              );
+              quarantineIpcFile(ipcBaseDir, sourceGroup, file, filePath);
+            }
+          }
+        }
+      } catch (err) {
+        logger.error(
+          { err, sourceGroup },
+          'Error reading IPC memory directory',
+        );
       }
     }
 
@@ -994,5 +1043,117 @@ export async function processTaskIpc(
 
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');
+  }
+}
+
+async function processMemoryIpc(
+  data: {
+    type: string;
+    category?: string;
+    content?: string;
+    memoryId?: string;
+    query?: string;
+    scope?: string;
+    limit?: number;
+    requestId?: string;
+  },
+  sourceGroup: string,
+): Promise<void> {
+  switch (data.type) {
+    case 'memory_add': {
+      if (data.category && data.content) {
+        try {
+          const id = await addCoreMemoryWithEmbedding(
+            sourceGroup,
+            data.category,
+            data.content,
+          );
+          logger.info(
+            { id, sourceGroup, category: data.category },
+            'Memory added via IPC',
+          );
+        } catch (err) {
+          logger.error({ sourceGroup, err }, 'IPC memory_add failed');
+        }
+      }
+      break;
+    }
+
+    case 'memory_update': {
+      if (data.memoryId && data.content) {
+        try {
+          await updateCoreMemoryWithEmbedding(data.memoryId, data.content);
+          logger.info(
+            { memoryId: data.memoryId, sourceGroup },
+            'Memory updated via IPC',
+          );
+        } catch (err) {
+          logger.error({ sourceGroup, err }, 'IPC memory_update failed');
+        }
+      }
+      break;
+    }
+
+    case 'memory_remove': {
+      if (data.memoryId) {
+        try {
+          removeCoreMemory(data.memoryId);
+          logger.info(
+            { memoryId: data.memoryId, sourceGroup },
+            'Memory removed via IPC',
+          );
+        } catch (err) {
+          logger.error({ sourceGroup, err }, 'IPC memory_remove failed');
+        }
+      }
+      break;
+    }
+
+    case 'memory_search': {
+      if (data.query && data.requestId) {
+        if (!/^[A-Za-z0-9_-]{1,128}$/.test(data.requestId)) {
+          logger.warn(
+            { sourceGroup, requestId: data.requestId },
+            'memory_search: invalid requestId, rejected',
+          );
+          break;
+        }
+        const scope = (data.scope as 'all' | 'conversations' | 'facts') || 'all';
+        const limit = Math.min(Math.max(Number(data.limit) || 10, 1), 50);
+        try {
+          const results = await searchAllMemory(
+            sourceGroup,
+            data.query,
+            scope,
+            limit,
+          );
+          const inputDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'input');
+          fs.mkdirSync(inputDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(inputDir, `res-${data.requestId}.json`),
+            JSON.stringify({ results }),
+          );
+          logger.info(
+            { sourceGroup, query: data.query },
+            'Memory search completed via IPC',
+          );
+        } catch (err) {
+          logger.error(
+            { sourceGroup, query: data.query, err },
+            'IPC memory_search failed',
+          );
+          const inputDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'input');
+          fs.mkdirSync(inputDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(inputDir, `res-${data.requestId}.json`),
+            JSON.stringify({ error: 'Search failed', results: '' }),
+          );
+        }
+      }
+      break;
+    }
+
+    default:
+      logger.warn({ type: data.type }, 'Unknown IPC memory type');
   }
 }

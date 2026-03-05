@@ -95,12 +95,17 @@ Files received in conversations (documents, images, PDFs, etc.) are automaticall
 
 ## Memory
 
-The `conversations/` folder contains searchable history of past conversations. Use this to recall context from previous sessions.
+You have a persistent memory system that automatically provides relevant context from past interactions. See the memory-tools skill for full details.
 
-When you learn something important:
-- Create files for structured data (e.g., `customers.md`, `preferences.md`)
-- Split files larger than 500 lines into folders
-- Keep an index in your memory for the files you create
+- **Core memories** (facts, preferences, instructions) are injected into your context automatically
+- **Conversation memory** records past messages and retrieves relevant ones via semantic search
+- **Store new facts** by writing `memory_add` JSON to `/workspace/ipc/memory/`
+- **Update/remove** existing memories using the memory snapshot at `/workspace/ipc/memory_snapshot.json`
+- **Search** across all memory layers with `memory_search`
+
+The `conversations/` folder also contains searchable history of past conversations for file-based recall.
+
+When you learn something important about the user or group, store it as a core memory so it persists across sessions.
 
 ## Message Formatting
 

@@ -115,7 +115,7 @@ function syncSkillsToGroup(groupSessionsDir: string): void {
  */
 function setupGroupIpcNamespace(groupFolder: string): string {
   const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
-  for (const sub of ['messages', 'tasks', 'input', 'media']) {
+  for (const sub of ['messages', 'tasks', 'input', 'media', 'memory']) {
     const dir = path.join(groupIpcDir, sub);
     fs.mkdirSync(dir, { recursive: true });
     try {

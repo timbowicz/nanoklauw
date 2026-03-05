@@ -53,6 +53,12 @@ import {
   stopFileWatcher,
   syncGoogleWorkspace,
 } from './document-index.js';
+import {
+  buildMemorySnapshot,
+  embedConversationMessages,
+  initMemorySchema,
+  retrieveMemoryContext,
+} from './memory.js';
 import { DocumentHandler } from './document-handler.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -275,7 +281,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     );
   }
 
-  const prompt = documentContext + formatMessages(missedMessages, TIMEZONE);
+  // Build memory RAG context
+  let memoryContext = '';
+  try {
+    memoryContext = await retrieveMemoryContext(group.folder, missedMessages);
+  } catch (err) {
+    logger.warn(
+      { group: group.name, err },
+      'Memory context retrieval failed',
+    );
+  }
+
+  const prompt =
+    memoryContext + documentContext + formatMessages(missedMessages, TIMEZONE);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -429,6 +447,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     documentHandler.cleanup(group.folder, documentRefs);
   }
 
+  // Embed conversation messages for memory RAG (fire-and-forget)
+  if (outputSentToUser) {
+    embedConversationMessages(group.folder, chatJid, missedMessages).catch(
+      (err) =>
+        logger.warn(
+          { group: group.name, err },
+          'Failed to embed conversation messages',
+        ),
+    );
+  }
+
   // Fallback: send completion reaction if not already sent during streaming
   if (!completionReactionSent) {
     sendCompletionReaction(output === 'error' || hadError ? '❌' : '✅');
@@ -506,6 +535,22 @@ async function runAgent(
     logger.warn(
       { group: group.name, err },
       'Failed to write document snapshot',
+    );
+  }
+
+  // Write memory snapshot for container to read
+  try {
+    const memSnapshot = buildMemorySnapshot(group.folder);
+    const ipcDir = path.join(DATA_DIR, 'ipc', group.folder);
+    fs.mkdirSync(ipcDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(ipcDir, 'memory_snapshot.json'),
+      JSON.stringify(memSnapshot, null, 2),
+    );
+  } catch (err) {
+    logger.warn(
+      { group: group.name, err },
+      'Failed to write memory snapshot',
     );
   }
 
@@ -829,6 +874,16 @@ async function main(): Promise<void> {
     logger.warn(
       { err },
       'Document index initialization failed — continuing without document search',
+    );
+  }
+
+  // Initialize memory system (tables + vec tables)
+  try {
+    initMemorySchema();
+  } catch (err) {
+    logger.warn(
+      { err },
+      'Memory schema initialization failed — continuing without memory',
     );
   }
 

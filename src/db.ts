@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
+import * as sqliteVec from 'sqlite-vec';
 
 import {
   ASSISTANT_NAME,
@@ -18,10 +19,16 @@ import {
 } from './types.js';
 
 let db: Database.Database;
+let sqliteVecLoaded = false;
 
 /** Expose the database instance for modules that need direct access (e.g. sqlite-vec). */
 export function getDb(): Database.Database {
   return db;
+}
+
+/** Check if the sqlite-vec extension was successfully loaded. */
+export function isSqliteVecLoaded(): boolean {
+  return sqliteVecLoaded;
 }
 
 export interface Reaction {
@@ -357,6 +364,19 @@ export function initDatabase(): void {
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
+
+  // Load sqlite-vec extension once, before any schema that needs vec0 tables
+  try {
+    sqliteVec.load(db);
+    sqliteVecLoaded = true;
+    logger.info('sqlite-vec extension loaded');
+  } catch (err) {
+    logger.warn(
+      { err },
+      'Failed to load sqlite-vec — vector search disabled',
+    );
+  }
+
   createSchema(db);
 
   // Migrate from JSON files if they exist

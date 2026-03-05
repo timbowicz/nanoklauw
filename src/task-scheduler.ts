@@ -1,8 +1,9 @@
 import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
+import path from 'path';
 
-import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { ASSISTANT_NAME, DATA_DIR, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -19,7 +20,8 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
-import { RegisteredGroup, ScheduledTask } from './types.js';
+import { buildMemorySnapshot, retrieveMemoryContext } from './memory.js';
+import { NewMessage, RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
  * Compute the next run time for a recurring task, anchored to the
@@ -146,6 +148,37 @@ async function runTask(
     })),
   );
 
+  // Retrieve memory context for the task prompt
+  let memoryContext = '';
+  try {
+    memoryContext = await retrieveMemoryContext(task.group_folder, [
+      { content: task.prompt } as NewMessage,
+    ]);
+  } catch (err) {
+    logger.warn(
+      { taskId: task.id, err },
+      'Memory context retrieval failed for task',
+    );
+  }
+
+  // Write memory snapshot for container to read
+  try {
+    const memSnapshot = buildMemorySnapshot(task.group_folder);
+    const ipcDir = path.join(DATA_DIR, 'ipc', task.group_folder);
+    fs.mkdirSync(ipcDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(ipcDir, 'memory_snapshot.json'),
+      JSON.stringify(memSnapshot, null, 2),
+    );
+  } catch (err) {
+    logger.warn(
+      { taskId: task.id, err },
+      'Failed to write memory snapshot for task',
+    );
+  }
+
+  const prompt = memoryContext + task.prompt;
+
   let result: string | null = null;
   let error: string | null = null;
 
@@ -172,7 +205,7 @@ async function runTask(
     const output = await runContainerAgent(
       group,
       {
-        prompt: task.prompt,
+        prompt,
         sessionId,
         groupFolder: task.group_folder,
         chatJid: task.chat_jid,
