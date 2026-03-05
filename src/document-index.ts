@@ -280,9 +280,7 @@ export function getDocumentByPath(
 ): DocumentRecord | undefined {
   const db = getDb();
   return db
-    .prepare(
-      'SELECT * FROM documents WHERE group_folder = ? AND file_path = ?',
-    )
+    .prepare('SELECT * FROM documents WHERE group_folder = ? AND file_path = ?')
     .get(groupFolder, filePath) as DocumentRecord | undefined;
 }
 
@@ -292,9 +290,7 @@ export function getDocumentBySourceId(
 ): DocumentRecord | undefined {
   const db = getDb();
   return db
-    .prepare(
-      'SELECT * FROM documents WHERE group_folder = ? AND source_id = ?',
-    )
+    .prepare('SELECT * FROM documents WHERE group_folder = ? AND source_id = ?')
     .get(groupFolder, sourceId) as DocumentRecord | undefined;
 }
 
@@ -364,14 +360,12 @@ export async function indexFile(
     if (vecTableInitialized) {
       try {
         const chunkIds = db
-          .prepare(
-            'SELECT id FROM document_chunks WHERE document_id = ?',
-          )
+          .prepare('SELECT id FROM document_chunks WHERE document_id = ?')
           .all(existing.id) as { id: string }[];
         for (const { id } of chunkIds) {
-          db.prepare(
-            'DELETE FROM document_chunks_vec WHERE chunk_id = ?',
-          ).run(id);
+          db.prepare('DELETE FROM document_chunks_vec WHERE chunk_id = ?').run(
+            id,
+          );
         }
       } catch {
         /* vec table may not exist in tests */
@@ -456,9 +450,9 @@ export function removeFromIndex(filePath: string, groupFolder: string): void {
         .prepare('SELECT id FROM document_chunks WHERE document_id = ?')
         .all(doc.id) as { id: string }[];
       for (const { id } of chunkIds) {
-        db.prepare(
-          'DELETE FROM document_chunks_vec WHERE chunk_id = ?',
-        ).run(id);
+        db.prepare('DELETE FROM document_chunks_vec WHERE chunk_id = ?').run(
+          id,
+        );
       }
     } catch {
       /* vec table may not exist */
@@ -486,6 +480,181 @@ function mimeFromExt(ext: string): string | null {
     '.json': 'application/json',
   };
   return map[ext.toLowerCase()] || null;
+}
+
+// ---- Search ----
+
+export async function searchDocumentsVec(
+  groupFolder: string,
+  query: string,
+  topK: number = 5,
+): Promise<SearchResult[]> {
+  if (!vecTableInitialized || !embeddingPipeline) {
+    return [];
+  }
+
+  const db = getDb();
+  const queryEmbedding = await embed(query);
+  const queryBuffer = Buffer.from(queryEmbedding.buffer);
+
+  // sqlite-vec MATCH syntax for vec0 tables
+  const vecResults = db
+    .prepare(
+      `SELECT chunk_id, distance
+    FROM document_chunks_vec
+    WHERE embedding MATCH ? AND k = ?`,
+    )
+    .all(queryBuffer, topK) as Array<{ chunk_id: string; distance: number }>;
+
+  if (vecResults.length === 0) return [];
+
+  // Join with chunk and document data
+  const placeholders = vecResults.map(() => '?').join(',');
+  const chunkIds = vecResults.map((r) => r.chunk_id);
+  const distanceMap = new Map(
+    vecResults.map((r) => [r.chunk_id, r.distance]),
+  );
+
+  const rows = db
+    .prepare(
+      `SELECT dc.id as chunk_id, dc.content, dc.metadata, d.file_path, d.source
+    FROM document_chunks dc
+    JOIN documents d ON d.id = dc.document_id
+    WHERE dc.id IN (${placeholders}) AND dc.group_folder = ?`,
+    )
+    .all(...chunkIds, groupFolder) as Array<{
+    chunk_id: string;
+    content: string;
+    metadata: string | null;
+    file_path: string;
+    source: string;
+  }>;
+
+  return rows
+    .map((r) => ({
+      content: r.content,
+      metadata: r.metadata ? JSON.parse(r.metadata) : null,
+      file_path: r.file_path,
+      source: r.source,
+      distance: distanceMap.get(r.chunk_id) || 1,
+    }))
+    .sort((a, b) => a.distance - b.distance);
+}
+
+// ---- RAG Context Builder ----
+
+export async function buildDocumentContext(
+  groupFolder: string,
+  query: string,
+  opts?: { topK?: number; skipEmbedding?: boolean },
+): Promise<string> {
+  const topK = opts?.topK || 5;
+
+  if (opts?.skipEmbedding) {
+    // Fallback without embeddings: simple keyword search
+    return buildKeywordContext(groupFolder, query, topK);
+  }
+
+  const results = await searchDocumentsVec(groupFolder, query, topK);
+  if (results.length === 0) return '';
+
+  return formatDocumentContext(results);
+}
+
+function buildKeywordContext(
+  groupFolder: string,
+  query: string,
+  topK: number,
+): string {
+  const db = getDb();
+  const keywords = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length > 2);
+  if (keywords.length === 0) return '';
+
+  // Simple LIKE-based search as fallback
+  const conditions = keywords
+    .map(() => 'LOWER(dc.content) LIKE ?')
+    .join(' OR ');
+  const params = keywords.map((k) => `%${k}%`);
+
+  const rows = db
+    .prepare(
+      `SELECT dc.content, dc.metadata, d.file_path, d.source
+    FROM document_chunks dc
+    JOIN documents d ON d.id = dc.document_id
+    WHERE dc.group_folder = ? AND (${conditions})
+    LIMIT ?`,
+    )
+    .all(groupFolder, ...params, topK) as Array<{
+    content: string;
+    metadata: string | null;
+    file_path: string;
+    source: string;
+  }>;
+
+  if (rows.length === 0) return '';
+
+  return formatDocumentContext(
+    rows.map((r) => ({
+      ...r,
+      metadata: r.metadata ? JSON.parse(r.metadata) : null,
+      distance: 0, // no distance for keyword search
+    })),
+  );
+}
+
+function formatDocumentContext(results: SearchResult[]): string {
+  if (results.length === 0) return '';
+
+  const chunks = results.map((r) => {
+    const attrs: string[] = [`file="${path.basename(r.file_path)}"`];
+    if (r.metadata) {
+      if ((r.metadata as any).page)
+        attrs.push(`page="${(r.metadata as any).page}"`);
+      if ((r.metadata as any).section)
+        attrs.push(`section="${(r.metadata as any).section}"`);
+    }
+    if (r.source !== 'local') attrs.push(`source="${r.source}"`);
+    if (r.distance > 0)
+      attrs.push(`relevance="${(1 - r.distance).toFixed(2)}"`);
+    return `  <chunk ${attrs.join(' ')}>\n    ${r.content.trim()}\n  </chunk>`;
+  });
+
+  return `<documents>\n${chunks.join('\n')}\n</documents>\n\n`;
+}
+
+// ---- Document Snapshot ----
+
+export function buildDocumentSnapshot(groupFolder: string): {
+  indexed_documents: Array<{
+    path: string;
+    source: string;
+    chunks: number;
+    updated: string;
+  }>;
+  total_chunks: number;
+  last_sync: string;
+} {
+  const docs = getDocumentsForGroup(groupFolder);
+  let totalChunks = 0;
+
+  const indexed_documents = docs.map((d) => {
+    totalChunks += d.chunk_count;
+    return {
+      path: d.file_path,
+      source: d.source,
+      chunks: d.chunk_count,
+      updated: d.updated_at,
+    };
+  });
+
+  return {
+    indexed_documents,
+    total_chunks: totalChunks,
+    last_sync: new Date().toISOString(),
+  };
 }
 
 export {

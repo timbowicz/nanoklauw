@@ -127,9 +127,8 @@ describe('document index - indexing pipeline', () => {
   });
 
   it('indexes a text file and stores chunks in DB', async () => {
-    const { indexFile, getDocumentByPath, getChunksForDocument } = await import(
-      './document-index.js'
-    );
+    const { indexFile, getDocumentByPath, getChunksForDocument } =
+      await import('./document-index.js');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docindex-'));
     const tmpFile = path.join(tmpDir, 'test.md');
     fs.writeFileSync(tmpFile, '# Hello\n\nThis is test content.');
@@ -149,9 +148,8 @@ describe('document index - indexing pipeline', () => {
   });
 
   it('skips re-indexing unchanged files', async () => {
-    const { indexFile, getDocumentByPath } = await import(
-      './document-index.js'
-    );
+    const { indexFile, getDocumentByPath } =
+      await import('./document-index.js');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docindex-'));
     const tmpFile = path.join(tmpDir, 'test.txt');
     fs.writeFileSync(tmpFile, 'unchanged content');
@@ -170,9 +168,8 @@ describe('document index - indexing pipeline', () => {
   });
 
   it('re-indexes when file content changes', async () => {
-    const { indexFile, getDocumentByPath } = await import(
-      './document-index.js'
-    );
+    const { indexFile, getDocumentByPath } =
+      await import('./document-index.js');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docindex-'));
     const tmpFile = path.join(tmpDir, 'test.txt');
     fs.writeFileSync(tmpFile, 'version 1');
@@ -185,6 +182,51 @@ describe('document index - indexing pipeline', () => {
     const doc2 = getDocumentByPath('test-group', tmpFile);
 
     expect(doc2!.file_hash).not.toBe(doc1!.file_hash);
+
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+});
+
+describe('document index - search', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+  });
+
+  it('buildDocumentContext returns XML with indexed chunks', async () => {
+    const { indexFile, buildDocumentContext } = await import(
+      './document-index.js'
+    );
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docindex-'));
+    const tmpFile = path.join(tmpDir, 'info.md');
+    fs.writeFileSync(tmpFile, '# Project Info\n\nThe deadline is March 15th.');
+
+    await indexFile(tmpFile, 'test-group', { skipEmbedding: true });
+
+    // Without embeddings, buildDocumentContext falls back to keyword matching
+    const context = await buildDocumentContext('test-group', 'deadline', {
+      skipEmbedding: true,
+    });
+    expect(typeof context).toBe('string');
+    // Keyword fallback should find the chunk containing "deadline"
+    expect(context).toContain('deadline');
+
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  it('buildDocumentSnapshot returns correct structure', async () => {
+    const { indexFile, buildDocumentSnapshot } = await import(
+      './document-index.js'
+    );
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docindex-'));
+    const tmpFile = path.join(tmpDir, 'notes.txt');
+    fs.writeFileSync(tmpFile, 'Some notes here.');
+
+    await indexFile(tmpFile, 'test-group', { skipEmbedding: true });
+
+    const snapshot = buildDocumentSnapshot('test-group');
+    expect(snapshot.indexed_documents).toHaveLength(1);
+    expect(snapshot.indexed_documents[0].source).toBe('local');
+    expect(snapshot.total_chunks).toBeGreaterThan(0);
 
     fs.rmSync(tmpDir, { recursive: true });
   });
