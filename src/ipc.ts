@@ -18,7 +18,11 @@ import {
   getTaskById,
   updateTask,
 } from './db.js';
-import { isValidGroupFolder } from './group-folder.js';
+import {
+  indexFile,
+  searchDocumentsVec,
+} from './document-index.js';
+import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { Channel, RegisteredGroup, SendMessageOpts } from './types.js';
 
@@ -626,6 +630,8 @@ export async function processTaskIpc(
     url?: string;
     query?: string;
     domain?: string;
+    // For document indexing
+    path?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -883,6 +889,98 @@ export async function processTaskIpc(
             getGroupName: (folder) => getGroupName(deps, folder),
           },
         );
+      }
+      break;
+    }
+
+    case 'index_file': {
+      if (data.path) {
+        const groupDir = resolveGroupFolderPath(sourceGroup);
+        const containerPath = data.path as string;
+        // Strip container prefix and resolve to host
+        const relativePath = containerPath
+          .replace(/^\/workspace\/group\//, '')
+          .replace(/^\/workspace\/ipc\//, '');
+        const hostPath = path.resolve(groupDir, relativePath);
+
+        // Security: ensure path stays within group folder
+        if (
+          !hostPath.startsWith(groupDir + path.sep) &&
+          hostPath !== groupDir
+        ) {
+          logger.warn(
+            { containerPath, sourceGroup, hostPath },
+            'index_file path traversal blocked',
+          );
+          break;
+        }
+
+        if (fs.existsSync(hostPath)) {
+          try {
+            await indexFile(hostPath, sourceGroup);
+            logger.info({ hostPath, sourceGroup }, 'File indexed via IPC');
+          } catch (err) {
+            logger.error(
+              { hostPath, sourceGroup, err },
+              'IPC index_file failed',
+            );
+          }
+        } else {
+          logger.warn(
+            { hostPath, sourceGroup },
+            'IPC index_file: file not found',
+          );
+        }
+      }
+      break;
+    }
+
+    case 'document_search': {
+      if (data.query && data.requestId) {
+        const topK = (data as any).top_k || 5;
+        try {
+          const results = await searchDocumentsVec(
+            sourceGroup,
+            data.query as string,
+            topK,
+          );
+          // Write response file for container to read
+          const inputDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'input');
+          fs.mkdirSync(inputDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(inputDir, `res-${data.requestId}.json`),
+            JSON.stringify({
+              results: results.map((r) => ({
+                file: path.basename(r.file_path),
+                content: r.content,
+                relevance:
+                  r.distance > 0 ? (1 - r.distance).toFixed(2) : '1.00',
+                source: r.source,
+                ...(r.metadata?.page ? { page: r.metadata.page } : {}),
+              })),
+            }),
+          );
+          logger.info(
+            {
+              sourceGroup,
+              query: data.query,
+              resultCount: results.length,
+            },
+            'Document search completed via IPC',
+          );
+        } catch (err) {
+          logger.error(
+            { sourceGroup, query: data.query, err },
+            'IPC document_search failed',
+          );
+          // Write error response
+          const inputDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'input');
+          fs.mkdirSync(inputDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(inputDir, `res-${data.requestId}.json`),
+            JSON.stringify({ error: 'Search failed', results: [] }),
+          );
+        }
       }
       break;
     }
