@@ -116,6 +116,23 @@ export class WhatsAppChannel implements Channel {
   }
 
   private async connectInternal(onFirstOpen?: () => void): Promise<void> {
+    // Clean up previous socket to prevent ghost socket accumulation (memory leak).
+    // Each reconnect creates a new socket; without cleanup, the old socket's event
+    // listeners, signal key store caches, and internal Baileys buffers remain in
+    // memory indefinitely, causing OOM after ~40h of uptime.
+    // See: https://github.com/qwibitai/nanoclaw/issues/595
+    if (this.sock) {
+      try {
+        this.sock.ev.removeAllListeners('connection.update');
+        this.sock.ev.removeAllListeners('creds.update');
+        this.sock.ev.removeAllListeners('messages.upsert');
+        this.sock.ev.removeAllListeners('messages.reaction');
+        this.sock.end(undefined);
+      } catch (err) {
+        logger.debug({ err }, 'Error cleaning up previous socket');
+      }
+    }
+
     const authDir = path.join(STORE_DIR, 'auth');
     fs.mkdirSync(authDir, { recursive: true, mode: 0o700 });
 
@@ -174,10 +191,6 @@ export class WhatsAppChannel implements Channel {
             return;
           }
           this.reconnecting = true;
-          // Close old socket to prevent conflict loops
-          try {
-            this.sock?.end(undefined);
-          } catch {}
           const delayMs = Math.min(
             BASE_RECONNECT_MS * Math.pow(2, this.reconnectAttempt),
             MAX_RECONNECT_MS,
