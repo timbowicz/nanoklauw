@@ -197,15 +197,15 @@ function buildVolumeMounts(
   });
 
   // Google Workspace CLI credentials directory (for gws inside the container).
-  // Read-only for non-main groups to prevent token exfiltration.
-  // Main group needs read-write for OAuth token refresh.
+  // Mounted read-write because gws requires chmod on the config dir and
+  // write access to token_cache.json even for read-only API calls.
   const homeDir = os.homedir();
   const gwsDir = path.join(homeDir, '.config', 'gws');
   if (fs.existsSync(gwsDir)) {
     mounts.push({
       hostPath: gwsDir,
       containerPath: '/home/node/.config/gws',
-      readonly: !isMain,
+      readonly: false,
     });
   }
 

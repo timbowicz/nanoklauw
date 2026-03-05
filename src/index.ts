@@ -347,6 +347,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           `Agent output: ${raw.slice(0, 200)}`,
         );
         if (text) {
+          // Clear typing indicator as soon as first output is sent.
+          // Don't wait for container exit — it may idle for minutes.
+          if (!outputSentToUser) {
+            channel.setTyping?.(chatJid, false);
+          }
           await channel.sendMessage(chatJid, text);
           outputSentToUser = true;
 
