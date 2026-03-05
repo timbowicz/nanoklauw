@@ -120,3 +120,72 @@ describe('document index - chunking', () => {
     expect(chunks[1]).toContain('Section 2');
   });
 });
+
+describe('document index - indexing pipeline', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+  });
+
+  it('indexes a text file and stores chunks in DB', async () => {
+    const { indexFile, getDocumentByPath, getChunksForDocument } = await import(
+      './document-index.js'
+    );
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docindex-'));
+    const tmpFile = path.join(tmpDir, 'test.md');
+    fs.writeFileSync(tmpFile, '# Hello\n\nThis is test content.');
+
+    await indexFile(tmpFile, 'test-group', { skipEmbedding: true });
+
+    const doc = getDocumentByPath('test-group', tmpFile);
+    expect(doc).toBeDefined();
+    expect(doc!.group_folder).toBe('test-group');
+    expect(doc!.chunk_count).toBeGreaterThan(0);
+
+    const chunks = getChunksForDocument(doc!.id);
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks[0].content).toContain('Hello');
+
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  it('skips re-indexing unchanged files', async () => {
+    const { indexFile, getDocumentByPath } = await import(
+      './document-index.js'
+    );
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docindex-'));
+    const tmpFile = path.join(tmpDir, 'test.txt');
+    fs.writeFileSync(tmpFile, 'unchanged content');
+
+    await indexFile(tmpFile, 'test-group', { skipEmbedding: true });
+    const doc1 = getDocumentByPath('test-group', tmpFile);
+
+    await indexFile(tmpFile, 'test-group', { skipEmbedding: true });
+    const doc2 = getDocumentByPath('test-group', tmpFile);
+
+    // Same document, same indexed_at (was not re-indexed)
+    expect(doc1!.id).toBe(doc2!.id);
+    expect(doc1!.indexed_at).toBe(doc2!.indexed_at);
+
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  it('re-indexes when file content changes', async () => {
+    const { indexFile, getDocumentByPath } = await import(
+      './document-index.js'
+    );
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docindex-'));
+    const tmpFile = path.join(tmpDir, 'test.txt');
+    fs.writeFileSync(tmpFile, 'version 1');
+
+    await indexFile(tmpFile, 'test-group', { skipEmbedding: true });
+    const doc1 = getDocumentByPath('test-group', tmpFile);
+
+    fs.writeFileSync(tmpFile, 'version 2 with new content');
+    await indexFile(tmpFile, 'test-group', { skipEmbedding: true });
+    const doc2 = getDocumentByPath('test-group', tmpFile);
+
+    expect(doc2!.file_hash).not.toBe(doc1!.file_hash);
+
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+});

@@ -272,6 +272,222 @@ export async function parseFile(filePath: string): Promise<string> {
   }
 }
 
+// ---- Database Accessors ----
+
+export function getDocumentByPath(
+  groupFolder: string,
+  filePath: string,
+): DocumentRecord | undefined {
+  const db = getDb();
+  return db
+    .prepare(
+      'SELECT * FROM documents WHERE group_folder = ? AND file_path = ?',
+    )
+    .get(groupFolder, filePath) as DocumentRecord | undefined;
+}
+
+export function getDocumentBySourceId(
+  groupFolder: string,
+  sourceId: string,
+): DocumentRecord | undefined {
+  const db = getDb();
+  return db
+    .prepare(
+      'SELECT * FROM documents WHERE group_folder = ? AND source_id = ?',
+    )
+    .get(groupFolder, sourceId) as DocumentRecord | undefined;
+}
+
+export function getChunksForDocument(documentId: string): ChunkRecord[] {
+  const db = getDb();
+  return db
+    .prepare(
+      'SELECT * FROM document_chunks WHERE document_id = ? ORDER BY chunk_index',
+    )
+    .all(documentId) as ChunkRecord[];
+}
+
+export function getDocumentsForGroup(groupFolder: string): DocumentRecord[] {
+  const db = getDb();
+  return db
+    .prepare(
+      'SELECT * FROM documents WHERE group_folder = ? ORDER BY updated_at DESC',
+    )
+    .all(groupFolder) as DocumentRecord[];
+}
+
+// ---- Indexing Pipeline ----
+
+export async function indexFile(
+  filePath: string,
+  groupFolder: string,
+  opts?: {
+    skipEmbedding?: boolean;
+    source?: DocumentRecord['source'];
+    sourceId?: string;
+  },
+): Promise<void> {
+  const db = getDb();
+  const source = opts?.source || 'local';
+  const hash = fileHash(filePath);
+
+  // Check if already indexed with same hash
+  const existing = getDocumentByPath(groupFolder, filePath);
+  if (existing && existing.file_hash === hash) {
+    return; // No changes, skip
+  }
+
+  // Parse file content
+  let content: string;
+  try {
+    content = await parseFile(filePath);
+  } catch (err) {
+    logger.warn({ filePath, err }, 'Failed to parse file for indexing');
+    return;
+  }
+
+  if (!content.trim()) {
+    logger.debug({ filePath }, 'Empty file, skipping indexing');
+    return;
+  }
+
+  // Chunk content
+  const chunks = chunkText(content);
+  const now = new Date().toISOString();
+  const stat = fs.statSync(filePath);
+
+  // If document exists, remove old chunks first
+  if (existing) {
+    db.prepare('DELETE FROM document_chunks WHERE document_id = ?').run(
+      existing.id,
+    );
+    if (vecTableInitialized) {
+      try {
+        const chunkIds = db
+          .prepare(
+            'SELECT id FROM document_chunks WHERE document_id = ?',
+          )
+          .all(existing.id) as { id: string }[];
+        for (const { id } of chunkIds) {
+          db.prepare(
+            'DELETE FROM document_chunks_vec WHERE chunk_id = ?',
+          ).run(id);
+        }
+      } catch {
+        /* vec table may not exist in tests */
+      }
+    }
+  }
+
+  const docId = existing?.id || crypto.randomUUID();
+
+  // Upsert document record
+  db.prepare(
+    `INSERT OR REPLACE INTO documents (id, group_folder, file_path, source, source_id, file_hash, file_size, mime_type, chunk_count, indexed_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    docId,
+    groupFolder,
+    filePath,
+    source,
+    opts?.sourceId || null,
+    hash,
+    stat.size,
+    mimeFromExt(path.extname(filePath)),
+    chunks.length,
+    existing?.indexed_at || now,
+    now,
+  );
+
+  // Insert chunks
+  const insertChunk = db.prepare(
+    `INSERT INTO document_chunks (id, document_id, group_folder, chunk_index, content, metadata, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  );
+
+  const insertMany = db.transaction((chunkList: string[]) => {
+    for (let i = 0; i < chunkList.length; i++) {
+      const chunkId = crypto.randomUUID();
+      insertChunk.run(chunkId, docId, groupFolder, i, chunkList[i], null, now);
+    }
+  });
+  insertMany(chunks);
+
+  // Embed chunks (skip in tests or when model not loaded)
+  if (!opts?.skipEmbedding && embeddingPipeline && vecTableInitialized) {
+    await embedChunks(docId);
+  }
+
+  logger.info(
+    { filePath, groupFolder, chunks: chunks.length, source },
+    'File indexed',
+  );
+}
+
+async function embedChunks(documentId: string): Promise<void> {
+  const db = getDb();
+  const chunks = getChunksForDocument(documentId);
+
+  const insertVec = db.prepare(
+    `INSERT OR REPLACE INTO document_chunks_vec (chunk_id, embedding)
+    VALUES (?, ?)`,
+  );
+
+  for (const chunk of chunks) {
+    try {
+      const embedding = await embed(chunk.content);
+      insertVec.run(chunk.id, Buffer.from(embedding.buffer));
+    } catch (err) {
+      logger.warn({ chunkId: chunk.id, err }, 'Failed to embed chunk');
+    }
+  }
+}
+
+// ---- Remove from index ----
+
+export function removeFromIndex(filePath: string, groupFolder: string): void {
+  const db = getDb();
+  const doc = getDocumentByPath(groupFolder, filePath);
+  if (!doc) return;
+
+  if (vecTableInitialized) {
+    try {
+      const chunkIds = db
+        .prepare('SELECT id FROM document_chunks WHERE document_id = ?')
+        .all(doc.id) as { id: string }[];
+      for (const { id } of chunkIds) {
+        db.prepare(
+          'DELETE FROM document_chunks_vec WHERE chunk_id = ?',
+        ).run(id);
+      }
+    } catch {
+      /* vec table may not exist */
+    }
+  }
+
+  db.prepare('DELETE FROM document_chunks WHERE document_id = ?').run(doc.id);
+  db.prepare('DELETE FROM documents WHERE id = ?').run(doc.id);
+
+  logger.info({ filePath, groupFolder }, 'File removed from index');
+}
+
+// ---- Helpers ----
+
+function mimeFromExt(ext: string): string | null {
+  const map: Record<string, string> = {
+    '.md': 'text/markdown',
+    '.txt': 'text/plain',
+    '.pdf': 'application/pdf',
+    '.docx':
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xlsx':
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.csv': 'text/csv',
+    '.json': 'application/json',
+  };
+  return map[ext.toLowerCase()] || null;
+}
+
 export {
   CHUNK_SIZE,
   CHUNK_OVERLAP,
