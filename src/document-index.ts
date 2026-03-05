@@ -56,12 +56,7 @@ const SUPPORTED_EXTENSIONS = new Set([
   '.json',
 ]);
 
-const IGNORED_DIRS = new Set([
-  'node_modules',
-  '.git',
-  'logs',
-  '.claude',
-]);
+const IGNORED_DIRS = new Set(['node_modules', '.git', 'logs', '.claude']);
 
 // ---- State ----
 
@@ -161,6 +156,55 @@ export function shouldIndex(filePath: string): boolean {
   }
 
   return true;
+}
+
+// ---- File Parsing ----
+
+export async function parseFile(filePath: string): Promise<string> {
+  const ext = path.extname(filePath).toLowerCase();
+
+  switch (ext) {
+    case '.md':
+    case '.txt':
+      return fs.readFileSync(filePath, 'utf-8');
+
+    case '.csv':
+      return fs.readFileSync(filePath, 'utf-8');
+
+    case '.json':
+      return JSON.stringify(
+        JSON.parse(fs.readFileSync(filePath, 'utf-8')),
+        null,
+        2,
+      );
+
+    case '.pdf': {
+      const pdfParse = (await import('pdf-parse')).default;
+      const buffer = fs.readFileSync(filePath);
+      const data = await pdfParse(buffer);
+      return data.text;
+    }
+
+    case '.docx': {
+      const mammoth = await import('mammoth');
+      const result = await mammoth.extractRawText({ path: filePath });
+      return result.value;
+    }
+
+    case '.xlsx': {
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.readFile(filePath);
+      const sheets: string[] = [];
+      for (const name of workbook.SheetNames) {
+        const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[name]);
+        sheets.push(`--- Sheet: ${name} ---\n${csv}`);
+      }
+      return sheets.join('\n\n');
+    }
+
+    default:
+      throw new Error(`Unsupported file type: ${ext}`);
+  }
 }
 
 export {

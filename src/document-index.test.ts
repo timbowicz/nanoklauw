@@ -48,3 +48,38 @@ describe('document index - embedding', () => {
     ).resolves.not.toThrow();
   });
 });
+
+describe('document index - parsing', () => {
+  it('parses markdown content', async () => {
+    const { parseFile } = await import('./document-index.js');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docindex-'));
+    const tmpFile = path.join(tmpDir, 'test.md');
+    fs.writeFileSync(tmpFile, '# Title\n\nSome content here.\n\n## Section 2\n\nMore content.');
+    const result = await parseFile(tmpFile);
+    expect(result).toContain('Title');
+    expect(result).toContain('Some content here.');
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  it('parses CSV content', async () => {
+    const { parseFile } = await import('./document-index.js');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docindex-'));
+    const tmpFile = path.join(tmpDir, 'test.csv');
+    fs.writeFileSync(tmpFile, 'name,age\nAlice,30\nBob,25');
+    const result = await parseFile(tmpFile);
+    expect(result).toContain('Alice');
+    expect(result).toContain('Bob');
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  it('parses JSON content', async () => {
+    const { parseFile } = await import('./document-index.js');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docindex-'));
+    const tmpFile = path.join(tmpDir, 'test.json');
+    fs.writeFileSync(tmpFile, JSON.stringify({ key: 'value', nested: { a: 1 } }));
+    const result = await parseFile(tmpFile);
+    expect(result).toContain('key');
+    expect(result).toContain('value');
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+});
