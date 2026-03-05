@@ -1,0 +1,25 @@
+skill: add-document-index
+version: 1.0.0
+description: "Semantic document search with RAG over group files and Google Workspace"
+core_version: 1.2.6
+adds:
+  - src/document-index.ts
+  - container/skills/document-search.md
+modifies:
+  - src/db.ts
+  - src/index.ts
+  - src/ipc.ts
+structured:
+  npm_dependencies:
+    sqlite-vec: "^0.1.7-alpha.2"
+    "@huggingface/transformers": "^3.8.1"
+    chokidar: "^4.0"
+    pdf-parse: "^1.1.1"
+    mammoth: "^1.8"
+    xlsx: "^0.18"
+  dev_dependencies:
+    "@types/pdf-parse": "*"
+  env_additions: []
+conflicts: []
+depends: []
+test: "npx vitest run src/document-index.test.ts"
