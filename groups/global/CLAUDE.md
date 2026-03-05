@@ -58,14 +58,20 @@ You have access to a shared Bitwarden vault via the `bw` CLI. Your credentials a
 - Use the bitwarden skill (`/bitwarden`) for detailed usage instructions
 - Never log or display passwords — pipe them directly into `agent-browser fill` commands
 
-## Email (Gmail)
+## Google Workspace
 
-You have access to Gmail (nanoklauw@gmail.com) via `mcp__gmail__*` tools. Use these to read, search, send, and draft emails on behalf of the user.
+You have access to Google Workspace (Sheets, Drive, Docs, Gmail) via the `gws` CLI. See the gws-* skills for detailed usage.
 
-- Send emails when the user asks you to contact someone
-- Search emails when the user asks about correspondence or expects something in their inbox
+- **Gmail**: read, search, send, and draft emails (`gws gmail +triage`, `gws gmail +send`)
+- **Sheets**: read, write, create spreadsheets (`gws sheets +read`, `gws sheets +append`)
+- **Drive**: list, search, upload, download files (`gws drive files list`, `gws drive +upload`)
+- **Docs**: create and edit documents (`gws docs documents create`, `gws docs +write`)
+
+Rules:
 - Never auto-respond to incoming emails — only act when explicitly asked
 - When composing emails, always confirm the recipient and content with the user before sending, unless they gave explicit instructions
+- Always confirm before executing write/delete operations on Drive, Sheets, or Docs
+- Use `gws <service> --help` and `gws schema` for discovery when unsure about parameters
 
 ## Parsing API Responses
 
