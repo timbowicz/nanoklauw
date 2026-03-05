@@ -51,6 +51,7 @@ import {
   initDocumentIndex,
   startFileWatcher,
   stopFileWatcher,
+  syncGoogleWorkspace,
 } from './document-index.js';
 import { DocumentHandler } from './document-handler.js';
 import { GroupQueue } from './group-queue.js';
@@ -268,7 +269,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       .slice(0, 500);
     documentContext = await buildDocumentContext(group.folder, queryText);
   } catch (err) {
-    logger.warn({ group: group.name, err }, 'Document context retrieval failed');
+    logger.warn(
+      { group: group.name, err },
+      'Document context retrieval failed',
+    );
   }
 
   const prompt = documentContext + formatMessages(missedMessages, TIMEZONE);
@@ -827,6 +831,22 @@ async function main(): Promise<void> {
       'Document index initialization failed — continuing without document search',
     );
   }
+
+  // Schedule periodic Google Workspace document sync (every 30 minutes)
+  const GWS_SYNC_INTERVAL = 30 * 60 * 1000;
+  const runGwsSync = async () => {
+    for (const group of Object.values(registeredGroups)) {
+      try {
+        const groupDir = resolveGroupFolderPath(group.folder);
+        await syncGoogleWorkspace(group.folder, groupDir);
+      } catch (err) {
+        logger.warn({ group: group.folder, err }, 'GWS sync failed for group');
+      }
+    }
+  };
+  // Run once at startup, then periodically
+  runGwsSync().catch((err) => logger.warn({ err }, 'Initial GWS sync failed'));
+  setInterval(runGwsSync, GWS_SYNC_INTERVAL);
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
