@@ -19,6 +19,11 @@ import {
 
 let db: Database.Database;
 
+/** Expose the database instance for modules that need direct access (e.g. sqlite-vec). */
+export function getDb(): Database.Database {
+  return db;
+}
+
 export interface Reaction {
   message_id: string;
   message_chat_jid: string;
@@ -117,6 +122,35 @@ function createSchema(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_reactions_reactor ON reactions(reactor_jid);
     CREATE INDEX IF NOT EXISTS idx_reactions_emoji ON reactions(emoji);
     CREATE INDEX IF NOT EXISTS idx_reactions_timestamp ON reactions(timestamp);
+
+    CREATE TABLE IF NOT EXISTS documents (
+      id TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      source TEXT NOT NULL,
+      source_id TEXT,
+      file_hash TEXT NOT NULL,
+      file_size INTEGER,
+      mime_type TEXT,
+      chunk_count INTEGER DEFAULT 0,
+      indexed_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_documents_group ON documents(group_folder);
+    CREATE INDEX IF NOT EXISTS idx_documents_hash ON documents(file_hash);
+    CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source, source_id);
+
+    CREATE TABLE IF NOT EXISTS document_chunks (
+      id TEXT PRIMARY KEY,
+      document_id TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      metadata TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_chunks_document ON document_chunks(document_id);
+    CREATE INDEX IF NOT EXISTS idx_chunks_group ON document_chunks(group_folder);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
