@@ -83,6 +83,10 @@ function writeProxyResponse(
     ...(error !== undefined ? { error } : {}),
   };
 
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(requestId)) {
+    logger.warn({ requestId, groupFolder }, 'writeProxyResponse: invalid requestId, rejected');
+    return;
+  }
   const filename = `proxy-response-${requestId}.json`;
   const filepath = path.join(inputDir, filename);
   const tempPath = `${filepath}.tmp`;

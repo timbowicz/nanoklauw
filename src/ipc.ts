@@ -937,7 +937,14 @@ export async function processTaskIpc(
 
     case 'document_search': {
       if (data.query && data.requestId) {
-        const topK = (data as any).top_k || 5;
+        if (!/^[A-Za-z0-9_-]{1,128}$/.test(data.requestId as string)) {
+          logger.warn(
+            { sourceGroup, requestId: data.requestId },
+            'document_search: invalid requestId, rejected',
+          );
+          break;
+        }
+        const topK = Math.min(Math.max(Number((data as any).top_k) || 5, 1), 50);
         try {
           const results = await searchDocumentsVec(
             sourceGroup,

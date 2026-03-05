@@ -1,6 +1,7 @@
 import { execFile } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
+import fsp from 'fs/promises';
 import path from 'path';
 import { promisify } from 'util';
 import { watch, type FSWatcher } from 'chokidar';
@@ -133,8 +134,8 @@ export async function embed(text: string): Promise<Float32Array> {
 
 // ---- Hashing ----
 
-export function fileHash(filePath: string): string {
-  const content = fs.readFileSync(filePath);
+export async function fileHash(filePath: string): Promise<string> {
+  const content = await fsp.readFile(filePath);
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
@@ -236,21 +237,19 @@ export async function parseFile(filePath: string): Promise<string> {
   switch (ext) {
     case '.md':
     case '.txt':
-      return fs.readFileSync(filePath, 'utf-8');
-
     case '.csv':
-      return fs.readFileSync(filePath, 'utf-8');
+      return fsp.readFile(filePath, 'utf-8');
 
     case '.json':
       return JSON.stringify(
-        JSON.parse(fs.readFileSync(filePath, 'utf-8')),
+        JSON.parse(await fsp.readFile(filePath, 'utf-8')),
         null,
         2,
       );
 
     case '.pdf': {
       const pdfParse = (await import('pdf-parse')).default;
-      const buffer = fs.readFileSync(filePath);
+      const buffer = await fsp.readFile(filePath);
       const data = await pdfParse(buffer);
       return data.text;
     }
@@ -330,7 +329,7 @@ export async function indexFile(
 ): Promise<void> {
   const db = getDb();
   const source = opts?.source || 'local';
-  const hash = fileHash(filePath);
+  const hash = await fileHash(filePath);
 
   // Check if already indexed with same hash
   const existing = getDocumentByPath(groupFolder, filePath);
@@ -358,10 +357,8 @@ export async function indexFile(
   const stat = fs.statSync(filePath);
 
   // If document exists, remove old chunks first
+  // Important: delete vec rows BEFORE chunk rows (vec query needs chunk IDs)
   if (existing) {
-    db.prepare('DELETE FROM document_chunks WHERE document_id = ?').run(
-      existing.id,
-    );
     if (vecTableInitialized) {
       try {
         const chunkIds = db
@@ -376,6 +373,9 @@ export async function indexFile(
         /* vec table may not exist in tests */
       }
     }
+    db.prepare('DELETE FROM document_chunks WHERE document_id = ?').run(
+      existing.id,
+    );
   }
 
   const docId = existing?.id || crypto.randomUUID();
@@ -577,10 +577,13 @@ function buildKeywordContext(
   if (keywords.length === 0) return '';
 
   // Simple LIKE-based search as fallback
+  // Escape LIKE wildcards to prevent wildcard injection
   const conditions = keywords
-    .map(() => 'LOWER(dc.content) LIKE ?')
+    .map(() => "LOWER(dc.content) LIKE ? ESCAPE '\\'")
     .join(' OR ');
-  const params = keywords.map((k) => `%${k}%`);
+  const params = keywords.map(
+    (k) => `%${k.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')}%`,
+  );
 
   const rows = db
     .prepare(
