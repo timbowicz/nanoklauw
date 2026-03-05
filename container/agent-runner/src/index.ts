@@ -619,10 +619,6 @@ async function runQuery(
             GEMINI_API_KEY: sdkEnv.GEMINI_API_KEY || '',
           },
         },
-        gmail: {
-          command: 'npx',
-          args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
-        },
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
