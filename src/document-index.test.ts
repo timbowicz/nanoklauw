@@ -54,7 +54,10 @@ describe('document index - parsing', () => {
     const { parseFile } = await import('./document-index.js');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docindex-'));
     const tmpFile = path.join(tmpDir, 'test.md');
-    fs.writeFileSync(tmpFile, '# Title\n\nSome content here.\n\n## Section 2\n\nMore content.');
+    fs.writeFileSync(
+      tmpFile,
+      '# Title\n\nSome content here.\n\n## Section 2\n\nMore content.',
+    );
     const result = await parseFile(tmpFile);
     expect(result).toContain('Title');
     expect(result).toContain('Some content here.');
@@ -76,10 +79,44 @@ describe('document index - parsing', () => {
     const { parseFile } = await import('./document-index.js');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docindex-'));
     const tmpFile = path.join(tmpDir, 'test.json');
-    fs.writeFileSync(tmpFile, JSON.stringify({ key: 'value', nested: { a: 1 } }));
+    fs.writeFileSync(
+      tmpFile,
+      JSON.stringify({ key: 'value', nested: { a: 1 } }),
+    );
     const result = await parseFile(tmpFile);
     expect(result).toContain('key');
     expect(result).toContain('value');
     fs.rmSync(tmpDir, { recursive: true });
+  });
+});
+
+describe('document index - chunking', () => {
+  it('chunks short text into a single chunk', async () => {
+    const { chunkText } = await import('./document-index.js');
+    const chunks = chunkText('Short text.');
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toBe('Short text.');
+  });
+
+  it('chunks long text with overlap', async () => {
+    const { chunkText, CHUNK_SIZE } = await import('./document-index.js');
+    // Generate text longer than CHUNK_SIZE
+    const longText = 'word '.repeat(1000); // ~5000 chars
+    const chunks = chunkText(longText);
+    expect(chunks.length).toBeGreaterThan(1);
+    // Each chunk should be <= CHUNK_SIZE (except possibly the last)
+    for (let i = 0; i < chunks.length - 1; i++) {
+      expect(chunks[i].length).toBeLessThanOrEqual(CHUNK_SIZE + 50);
+    }
+  });
+
+  it('splits markdown on headers', async () => {
+    const { chunkText } = await import('./document-index.js');
+    const md =
+      '# Section 1\n\nContent of section 1.\n\n# Section 2\n\nContent of section 2.';
+    const chunks = chunkText(md);
+    expect(chunks.length).toBe(2);
+    expect(chunks[0]).toContain('Section 1');
+    expect(chunks[1]).toContain('Section 2');
   });
 });

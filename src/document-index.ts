@@ -158,6 +158,71 @@ export function shouldIndex(filePath: string): boolean {
   return true;
 }
 
+// ---- Chunking ----
+
+export function chunkText(text: string): string[] {
+  if (!text.trim()) return [];
+
+  // Try header-based splitting for markdown
+  const headerPattern = /^#{1,3}\s+/m;
+  if (headerPattern.test(text)) {
+    return chunkByHeaders(text);
+  }
+
+  // Fallback: sliding window with overlap
+  return chunkBySize(text);
+}
+
+function chunkByHeaders(text: string): string[] {
+  // Split on h1/h2/h3 headers, keeping the header with its content
+  const sections = text.split(/(?=^#{1,3}\s+)/m).filter((s) => s.trim());
+  const chunks: string[] = [];
+
+  for (const section of sections) {
+    if (section.length <= CHUNK_SIZE) {
+      chunks.push(section.trim());
+    } else {
+      // Section too long, split further by size
+      chunks.push(...chunkBySize(section));
+    }
+  }
+
+  return chunks;
+}
+
+function chunkBySize(text: string): string[] {
+  const chunks: string[] = [];
+  const paragraphs = text.split(/\n\n+/);
+  let current = '';
+
+  for (const para of paragraphs) {
+    if (current.length + para.length + 2 > CHUNK_SIZE && current.length > 0) {
+      chunks.push(current.trim());
+      // Overlap: keep the last CHUNK_OVERLAP chars
+      const overlapStart = Math.max(0, current.length - CHUNK_OVERLAP);
+      current = current.slice(overlapStart) + '\n\n' + para;
+    } else {
+      current += (current ? '\n\n' : '') + para;
+    }
+  }
+
+  if (current.trim()) {
+    chunks.push(current.trim());
+  }
+
+  // If no paragraph splits worked (e.g. one giant paragraph), force-split
+  if (chunks.length === 1 && chunks[0].length > CHUNK_SIZE) {
+    const forced: string[] = [];
+    const bigText = chunks[0];
+    for (let i = 0; i < bigText.length; i += CHUNK_SIZE - CHUNK_OVERLAP) {
+      forced.push(bigText.slice(i, i + CHUNK_SIZE).trim());
+    }
+    return forced.filter((c) => c);
+  }
+
+  return chunks;
+}
+
 // ---- File Parsing ----
 
 export async function parseFile(filePath: string): Promise<string> {
