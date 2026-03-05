@@ -1118,7 +1118,8 @@ async function processMemoryIpc(
           );
           break;
         }
-        const scope = (data.scope as 'all' | 'conversations' | 'facts') || 'all';
+        const scope =
+          (data.scope as 'all' | 'conversations' | 'facts') || 'all';
         const limit = Math.min(Math.max(Number(data.limit) || 10, 1), 50);
         try {
           const results = await searchAllMemory(

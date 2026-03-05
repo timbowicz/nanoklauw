@@ -286,10 +286,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   try {
     memoryContext = await retrieveMemoryContext(group.folder, missedMessages);
   } catch (err) {
-    logger.warn(
-      { group: group.name, err },
-      'Memory context retrieval failed',
-    );
+    logger.warn({ group: group.name, err }, 'Memory context retrieval failed');
   }
 
   const prompt =
@@ -548,10 +545,7 @@ async function runAgent(
       JSON.stringify(memSnapshot, null, 2),
     );
   } catch (err) {
-    logger.warn(
-      { group: group.name, err },
-      'Failed to write memory snapshot',
-    );
+    logger.warn({ group: group.name, err }, 'Failed to write memory snapshot');
   }
 
   // Wrap onOutput to track session ID from streamed results

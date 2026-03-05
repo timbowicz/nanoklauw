@@ -371,10 +371,7 @@ export function initDatabase(): void {
     sqliteVecLoaded = true;
     logger.info('sqlite-vec extension loaded');
   } catch (err) {
-    logger.warn(
-      { err },
-      'Failed to load sqlite-vec — vector search disabled',
-    );
+    logger.warn({ err }, 'Failed to load sqlite-vec — vector search disabled');
   }
 
   createSchema(db);
