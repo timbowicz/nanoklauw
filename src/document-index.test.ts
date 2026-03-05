@@ -1,3 +1,6 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { _initTestDatabase } from './db.js';
 
@@ -28,5 +31,20 @@ describe('document index schema', () => {
     expect(columns).toContain('id');
     expect(columns).toContain('document_id');
     expect(columns).toContain('content');
+  });
+});
+
+describe('document index - embedding', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+  });
+
+  it('initializes the document index module', async () => {
+    const { initDocumentIndex } = await import('./document-index.js');
+    // initDocumentIndex should create the vec table and load the model
+    // For tests, we skip actual model loading and vec extension
+    await expect(
+      initDocumentIndex({ skipModel: true, skipVec: true }),
+    ).resolves.not.toThrow();
   });
 });
