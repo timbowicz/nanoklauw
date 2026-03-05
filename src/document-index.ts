@@ -1,10 +1,14 @@
+import { execFile } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { promisify } from 'util';
 import { watch, type FSWatcher } from 'chokidar';
 
 import { getDb } from './db.js';
 import { logger } from './logger.js';
+
+const execFileAsync = promisify(execFile);
 
 // ---- Types ----
 
@@ -754,6 +758,171 @@ function extractGroupFolder(
   const parts = relative.split(path.sep);
   if (parts.length < 2) return null; // File must be inside a group folder
   return parts[0];
+}
+
+// ---- Google Workspace Sync ----
+
+interface GwsSyncConfig {
+  drive_folders?: string[]; // Google Drive folder IDs
+  doc_ids?: string[]; // Specific Google Doc IDs
+  sheet_ids?: string[]; // Specific Google Sheet IDs
+}
+
+export async function syncGoogleWorkspace(
+  groupFolder: string,
+  groupDir: string,
+): Promise<void> {
+  // Read config from group folder
+  const configPath = path.join(groupDir, 'document-index.yaml');
+  if (!fs.existsSync(configPath)) {
+    return; // No GWS config for this group
+  }
+
+  let config: GwsSyncConfig;
+  try {
+    const yaml = await import('yaml');
+    config = yaml.parse(
+      fs.readFileSync(configPath, 'utf-8'),
+    ) as GwsSyncConfig;
+  } catch (err) {
+    logger.warn({ groupFolder, err }, 'Failed to parse document-index.yaml');
+    return;
+  }
+
+  const tmpDir = path.join(groupDir, '.doc-index-tmp');
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  try {
+    // Sync Google Docs
+    if (config.doc_ids?.length) {
+      for (const docId of config.doc_ids) {
+        try {
+          const tmpFile = path.join(tmpDir, `gdoc-${docId}.txt`);
+          await execFileAsync('gws', [
+            'docs',
+            'export',
+            docId,
+            '--format',
+            'txt',
+            '--output',
+            tmpFile,
+          ]);
+          if (fs.existsSync(tmpFile)) {
+            await indexFile(tmpFile, groupFolder, {
+              source: 'google-docs',
+              sourceId: docId,
+            });
+          }
+        } catch (err) {
+          logger.warn({ docId, groupFolder, err }, 'Failed to sync Google Doc');
+        }
+      }
+    }
+
+    // Sync Google Sheets
+    if (config.sheet_ids?.length) {
+      for (const sheetId of config.sheet_ids) {
+        try {
+          const tmpFile = path.join(tmpDir, `gsheet-${sheetId}.csv`);
+          await execFileAsync('gws', [
+            'sheets',
+            'export',
+            sheetId,
+            '--format',
+            'csv',
+            '--output',
+            tmpFile,
+          ]);
+          if (fs.existsSync(tmpFile)) {
+            await indexFile(tmpFile, groupFolder, {
+              source: 'google-sheets',
+              sourceId: sheetId,
+            });
+          }
+        } catch (err) {
+          logger.warn(
+            { sheetId, groupFolder, err },
+            'Failed to sync Google Sheet',
+          );
+        }
+      }
+    }
+
+    // Sync Drive folders
+    if (config.drive_folders?.length) {
+      for (const folderId of config.drive_folders) {
+        try {
+          const { stdout } = await execFileAsync('gws', [
+            'drive',
+            'list',
+            folderId,
+            '--format',
+            'json',
+          ]);
+          const files = JSON.parse(stdout) as Array<{
+            id: string;
+            name: string;
+            mimeType: string;
+          }>;
+          for (const file of files) {
+            try {
+              const ext = guessExtFromMime(file.mimeType);
+              if (!ext) continue;
+              const tmpFile = path.join(tmpDir, `drive-${file.id}${ext}`);
+              await execFileAsync('gws', [
+                'drive',
+                'download',
+                file.id,
+                '--output',
+                tmpFile,
+              ]);
+              if (fs.existsSync(tmpFile)) {
+                await indexFile(tmpFile, groupFolder, {
+                  source: 'google-drive',
+                  sourceId: file.id,
+                });
+              }
+            } catch (err) {
+              logger.warn(
+                { fileId: file.id, groupFolder, err },
+                'Failed to sync Drive file',
+              );
+            }
+          }
+        } catch (err) {
+          logger.warn(
+            { folderId, groupFolder, err },
+            'Failed to list Drive folder',
+          );
+        }
+      }
+    }
+  } finally {
+    // Cleanup temp files
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      /* ignore cleanup errors */
+    }
+  }
+
+  logger.info({ groupFolder }, 'Google Workspace sync completed');
+}
+
+function guessExtFromMime(mimeType: string): string | null {
+  const map: Record<string, string> = {
+    'application/pdf': '.pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+      '.docx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+      '.xlsx',
+    'text/csv': '.csv',
+    'text/plain': '.txt',
+    'application/json': '.json',
+    'application/vnd.google-apps.document': '.txt', // exported as text
+    'application/vnd.google-apps.spreadsheet': '.csv', // exported as csv
+  };
+  return map[mimeType] || null;
 }
 
 export {
