@@ -29,20 +29,34 @@ RUN npm install -g agent-browser @anthropic-ai/claude-code @bitwarden/cli @googl
 
 ### 2b. Container runner — mount credentials
 
-In `src/container-runner.ts`, in `buildVolumeMounts()`, add a mount for `~/.gws/`:
+In `src/container-runner.ts`, in `buildVolumeMounts()`, add a mount for `~/.config/gws/`:
 
 ```typescript
-const gwsDir = path.join(os.homedir(), '.gws');
+const gwsDir = path.join(os.homedir(), '.config', 'gws');
 if (fs.existsSync(gwsDir)) {
   mounts.push({
     hostPath: gwsDir,
-    containerPath: '/home/node/.gws',
+    containerPath: '/home/node/.config/gws',
     readonly: !isMain,
   });
 }
 ```
 
 Main group gets read-write (for OAuth token refresh), others get read-only.
+
+In `buildDockerArgs()`, add the credentials env var:
+
+```typescript
+args.push('-e', 'GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/home/node/.config/gws/credentials.json');
+```
+
+**Important:** After `gws auth login`, the credentials are stored encrypted (`credentials.enc`). You must decrypt them to `credentials.json` for the container to use:
+
+```bash
+gws auth export > ~/.config/gws/credentials.json
+```
+
+Note: `gws auth export` masks secrets by default. If the file contains masked values, decrypt manually using the `.encryption_key`.
 
 ### 2c. Agent skills
 
@@ -115,16 +129,16 @@ journalctl -u nanoklauw -f
 Rebuild: `cd container && ./build.sh`
 
 ### Auth errors
-Check `~/.gws/` exists and has tokens. Re-run `gws auth login`.
+Check `~/.config/gws/` exists and has `credentials.json` (plain, not just `.enc`). Re-run `gws auth login` if needed.
 
-### Permission errors on ~/.gws mount
+### Permission errors on gws mount
 ```bash
-chown -R 1000:1000 ~/.gws
+chown -R 1000:1000 ~/.config/gws
 ```
 
 ## Removal
 
 1. Remove `@googleworkspace/cli` from `container/Dockerfile`
-2. Remove `~/.gws` mount from `src/container-runner.ts`
+2. Remove `~/.config/gws` mount and `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` env var from `src/container-runner.ts`
 3. Delete `container/skills/gws-*/`
 4. Rebuild container and restart

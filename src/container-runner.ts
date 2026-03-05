@@ -200,11 +200,11 @@ function buildVolumeMounts(
   // Read-only for non-main groups to prevent token exfiltration.
   // Main group needs read-write for OAuth token refresh.
   const homeDir = os.homedir();
-  const gwsDir = path.join(homeDir, '.gws');
+  const gwsDir = path.join(homeDir, '.config', 'gws');
   if (fs.existsSync(gwsDir)) {
     mounts.push({
       hostPath: gwsDir,
-      containerPath: '/home/node/.gws',
+      containerPath: '/home/node/.config/gws',
       readonly: !isMain,
     });
   }
@@ -313,6 +313,10 @@ function buildContainerArgs(
   args.push('-e', 'DISABLE_TELEMETRY=1');
   args.push('-e', 'DISABLE_ERROR_REPORTING=1');
   args.push('-e', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1');
+
+  // Google Workspace CLI: point gws to the mounted credentials file.
+  // The env var is safe to set unconditionally — gws ignores it if file is missing.
+  args.push('-e', 'GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/home/node/.config/gws/credentials.json');
 
   // Bitwarden is always enabled. Credentials are passed via stdin JSON (input.secrets),
   // NOT as Docker env vars (which are visible via docker inspect).

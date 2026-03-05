@@ -8,10 +8,10 @@ allowed-tools: Bash(gws:*)
 
 ## Authentication
 
-gws is pre-configured with OAuth credentials. Check availability:
+gws is pre-configured with OAuth credentials via `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`. Check availability:
 
 ```bash
-gws auth status 2>&1 | grep -q "authenticated" && echo "READY" || echo "NOT AVAILABLE"
+[ -n "$GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE" ] && [ -f "$GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE" ] && echo "READY" || echo "NOT AVAILABLE"
 ```
 
 If not available, Google Workspace is not enabled for this installation. Do not attempt to authenticate manually.
