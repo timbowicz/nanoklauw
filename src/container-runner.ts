@@ -196,15 +196,15 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Gmail credentials directory (for Gmail MCP inside the container).
+  // Google Workspace CLI credentials directory (for gws inside the container).
   // Read-only for non-main groups to prevent token exfiltration.
   // Main group needs read-write for OAuth token refresh.
   const homeDir = os.homedir();
-  const gmailDir = path.join(homeDir, '.gmail-mcp');
-  if (fs.existsSync(gmailDir)) {
+  const gwsDir = path.join(homeDir, '.gws');
+  if (fs.existsSync(gwsDir)) {
     mounts.push({
-      hostPath: gmailDir,
-      containerPath: '/home/node/.gmail-mcp',
+      hostPath: gwsDir,
+      containerPath: '/home/node/.gws',
       readonly: !isMain,
     });
   }
