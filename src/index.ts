@@ -12,6 +12,7 @@ import type { ChannelOpts } from './channels/registry.js';
 import {
   ASSISTANT_NAME,
   CONTAINER_IMAGE,
+  DATA_DIR,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
   TIMEZONE,
@@ -728,8 +729,47 @@ function ensureContainerSystemRunning(): void {
   cleanupOrphans();
 }
 
+const PID_FILE = path.join(DATA_DIR, 'nanoclaw.pid');
+
+function acquirePidLock(): void {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  try {
+    const existing = fs.readFileSync(PID_FILE, 'utf-8').trim();
+    const pid = parseInt(existing, 10);
+    if (pid && !isNaN(pid)) {
+      try {
+        // signal 0 tests if process exists without killing it
+        process.kill(pid, 0);
+        logger.error(
+          { pid },
+          'Another NanoClaw instance is already running. Exiting.',
+        );
+        process.exit(1);
+      } catch {
+        // Process not running — stale lockfile, safe to overwrite
+        logger.info({ stalePid: pid }, 'Removing stale PID file');
+      }
+    }
+  } catch {
+    // PID file doesn't exist yet — first run
+  }
+  fs.writeFileSync(PID_FILE, String(process.pid), { mode: 0o644 });
+}
+
+function removePidLock(): void {
+  try {
+    const content = fs.readFileSync(PID_FILE, 'utf-8').trim();
+    if (content === String(process.pid)) {
+      fs.unlinkSync(PID_FILE);
+    }
+  } catch {
+    // Already removed or never created
+  }
+}
+
 async function main(): Promise<void> {
   validateEnvironment();
+  acquirePidLock();
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
@@ -743,6 +783,7 @@ async function main(): Promise<void> {
     stopRestrictedNetwork();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
+    removePidLock();
     process.exit(0);
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
