@@ -292,6 +292,8 @@ function buildContainerArgs(
     '256',
     '--security-opt',
     'no-new-privileges:true',
+    '--security-opt',
+    'apparmor=nanoclaw-agent',
     '--cap-drop',
     'ALL',
   ];
@@ -316,7 +318,10 @@ function buildContainerArgs(
 
   // Google Workspace CLI: point gws to the mounted credentials file.
   // The env var is safe to set unconditionally — gws ignores it if file is missing.
-  args.push('-e', 'GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/home/node/.config/gws/credentials.json');
+  args.push(
+    '-e',
+    'GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/home/node/.config/gws/credentials.json',
+  );
 
   // Bitwarden is always enabled. Credentials are passed via stdin JSON (input.secrets),
   // NOT as Docker env vars (which are visible via docker inspect).

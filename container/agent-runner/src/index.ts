@@ -207,11 +207,28 @@ function createPreCompactHook(assistantName?: string): HookCallback {
 // so any secret added to CONTAINER_SECRETS in config.ts is automatically
 // protected here without maintaining a separate list.
 // See: https://github.com/qwibitai/nanoclaw/issues/709
+// Regex to detect attempts to read /proc/*/environ (covers cat, head, tail, xxd, etc.)
+const PROC_ENVIRON_PATTERN = /\/proc\/[^/]*\/environ/;
+
 function createSanitizeBashHook(secretKeys: string[]): HookCallback {
   return async (input, _toolUseId, _context) => {
     const preInput = input as PreToolUseHookInput;
     const command = (preInput.tool_input as { command?: string })?.command;
-    if (!command || secretKeys.length === 0) return {};
+    if (!command) return {};
+
+    // Block any command that references /proc/*/environ
+    if (PROC_ENVIRON_PATTERN.test(command)) {
+      return {
+        decision: 'block',
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: 'Access to /proc/*/environ is restricted to prevent secret exfiltration.',
+        },
+      };
+    }
+
+    if (secretKeys.length === 0) return {};
 
     const unsetPrefix = `unset ${secretKeys.join(' ')} 2>/dev/null; `;
     return {
@@ -223,6 +240,30 @@ function createSanitizeBashHook(secretKeys: string[]): HookCallback {
         },
       },
     };
+  };
+}
+
+// Block the Read tool from accessing /proc/<pid>/environ.
+// Defense-in-depth: AppArmor blocks at the kernel level,
+// this hook provides a clear error message at the application level.
+function createBlockProcEnvironReadHook(): HookCallback {
+  return async (input, _toolUseId, _context) => {
+    const preInput = input as PreToolUseHookInput;
+    const filePath = (preInput.tool_input as { file_path?: string })?.file_path;
+    if (!filePath) return {};
+
+    if (PROC_ENVIRON_PATTERN.test(filePath)) {
+      return {
+        decision: 'block',
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: 'Access to /proc/*/environ is restricted to prevent secret exfiltration.',
+        },
+      };
+    }
+
+    return {};
   };
 }
 
@@ -622,7 +663,10 @@ async function runQuery(
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
-        PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook(Object.keys(containerInput.secrets || {}))] }],
+        PreToolUse: [
+          { matcher: 'Bash', hooks: [createSanitizeBashHook(Object.keys(containerInput.secrets || {}))] },
+          { matcher: 'Read', hooks: [createBlockProcEnvironReadHook()] },
+        ],
       },
     }
   })) {

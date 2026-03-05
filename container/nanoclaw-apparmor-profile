@@ -1,0 +1,14 @@
+#include <tunables/global>
+
+profile nanoclaw-agent flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+
+  # Allow general file and network access (container defaults)
+  file,
+  network,
+
+  # Block reading process environment from /proc — prevents secret exfiltration
+  # via cat /proc/self/environ or /proc/<pid>/environ
+  deny /proc/*/environ r,
+}
