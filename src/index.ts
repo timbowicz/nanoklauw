@@ -45,6 +45,13 @@ import {
   storeChatMetadata,
   storeMessage,
 } from './db.js';
+import {
+  buildDocumentContext,
+  buildDocumentSnapshot,
+  initDocumentIndex,
+  startFileWatcher,
+  stopFileWatcher,
+} from './document-index.js';
 import { DocumentHandler } from './document-handler.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -252,7 +259,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     missedMessages,
   );
 
-  const prompt = formatMessages(missedMessages, TIMEZONE);
+  // Build document RAG context
+  let documentContext = '';
+  try {
+    const queryText = missedMessages
+      .map((m) => m.content)
+      .join(' ')
+      .slice(0, 500);
+    documentContext = await buildDocumentContext(group.folder, queryText);
+  } catch (err) {
+    logger.warn({ group: group.name, err }, 'Document context retrieval failed');
+  }
+
+  const prompt = documentContext + formatMessages(missedMessages, TIMEZONE);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -469,6 +488,22 @@ async function runAgent(
     availableGroups,
     new Set(Object.keys(registeredGroups)),
   );
+
+  // Write document snapshot for container to read
+  try {
+    const docSnapshot = buildDocumentSnapshot(group.folder);
+    const ipcDir = path.join(DATA_DIR, 'ipc', group.folder);
+    fs.mkdirSync(ipcDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(ipcDir, 'document_snapshot.json'),
+      JSON.stringify(docSnapshot, null, 2),
+    );
+  } catch (err) {
+    logger.warn(
+      { group: group.name, err },
+      'Failed to write document snapshot',
+    );
+  }
 
   // Wrap onOutput to track session ID from streamed results
   const wrappedOnOutput = onOutput
@@ -781,9 +816,22 @@ async function main(): Promise<void> {
   await ensureRestrictedNetwork();
   loadState();
 
+  // Initialize document indexing
+  try {
+    await initDocumentIndex();
+    startFileWatcher(path.join(process.cwd(), 'groups'));
+    logger.info('Document index initialized');
+  } catch (err) {
+    logger.warn(
+      { err },
+      'Document index initialization failed — continuing without document search',
+    );
+  }
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    stopFileWatcher();
     flushState();
     stopRestrictedNetwork();
     await queue.shutdown(10000);
