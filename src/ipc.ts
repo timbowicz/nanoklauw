@@ -782,7 +782,13 @@ export async function processTaskIpc(
           );
         } else {
           logger.info(
-            { taskId: result.id, taskName, sourceGroup, targetFolder, contextMode },
+            {
+              taskId: result.id,
+              taskName,
+              sourceGroup,
+              targetFolder,
+              contextMode,
+            },
             'Task created via IPC',
           );
         }

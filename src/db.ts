@@ -228,9 +228,7 @@ function createSchema(database: Database.Database): void {
 
   // Add name column for task idempotency (upstream #783)
   try {
-    database.exec(
-      `ALTER TABLE scheduled_tasks ADD COLUMN name TEXT`,
-    );
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN name TEXT`);
   } catch {
     /* column already exists */
   }
