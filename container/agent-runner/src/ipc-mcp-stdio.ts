@@ -91,7 +91,9 @@ server.tool(
 
 server.tool(
   'schedule_task',
-  `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
+  `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference.
+
+IDEMPOTENCY - Always provide a "name" for recurring tasks. If a task with the same name already exists for this group, it is updated instead of creating a duplicate. This prevents task accumulation across sessions.
 
 CONTEXT MODE - Choose based on task type:
 \u2022 "group": Task runs in the group's conversation context, with access to chat history. Use for tasks that need context about ongoing discussions, user preferences, or recent interactions.
@@ -116,6 +118,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     prompt: z.string().describe('What the agent should do when the task runs. For isolated mode, include all necessary context here.'),
     schedule_type: z.enum(['cron', 'interval', 'once']).describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
     schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
+    name: z.string().optional().describe('Idempotency key. If a task with this name already exists for this group, it is updated instead of duplicated. Use a short stable identifier like "daily-weather" or "overnight-research". Strongly recommended for recurring tasks.'),
     context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
     target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
   },
@@ -159,12 +162,13 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    const data = {
+    const data: Record<string, string | undefined> = {
       type: 'schedule_task',
       taskId,
       prompt: args.prompt,
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
+      name: args.name || undefined,
       context_mode: args.context_mode || 'group',
       targetJid,
       createdBy: groupFolder,

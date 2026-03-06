@@ -761,7 +761,8 @@ export async function processTaskIpc(
           data.context_mode === 'group' || data.context_mode === 'isolated'
             ? data.context_mode
             : 'isolated';
-        createTask({
+        const taskName = data.name || null;
+        const result = createTask({
           id: taskId,
           group_folder: targetFolder,
           chat_jid: targetJid,
@@ -769,14 +770,22 @@ export async function processTaskIpc(
           schedule_type: scheduleType,
           schedule_value: data.schedule_value,
           context_mode: contextMode,
+          name: taskName,
           next_run: nextRun,
           status: 'active',
           created_at: new Date().toISOString(),
         });
-        logger.info(
-          { taskId, sourceGroup, targetFolder, contextMode },
-          'Task created via IPC',
-        );
+        if (result.existed) {
+          logger.info(
+            { taskId: result.id, taskName, sourceGroup, targetFolder },
+            'Task updated via IPC (idempotent upsert)',
+          );
+        } else {
+          logger.info(
+            { taskId: result.id, taskName, sourceGroup, targetFolder, contextMode },
+            'Task created via IPC',
+          );
+        }
       }
       break;
 
