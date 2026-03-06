@@ -265,6 +265,7 @@ export class WhatsAppChannel implements Channel {
 
     this.sock.ev.on('messages.upsert', async ({ messages }) => {
       for (const msg of messages) {
+        try {
         if (!msg.message) continue;
         // Unwrap container types (viewOnceMessageV2, ephemeralMessage,
         // editedMessage, etc.) so that conversation, extendedTextMessage,
@@ -374,6 +375,12 @@ export class WhatsAppChannel implements Channel {
             ...(imageData ? { image_data: imageData } : {}),
             ...(documentData ? { document_data: documentData } : {}),
           });
+        }
+        } catch (err) {
+          logger.error(
+            { err, msgId: msg.key?.id, remoteJid: msg.key?.remoteJid },
+            'Failed to process message in messages.upsert',
+          );
         }
       }
     });

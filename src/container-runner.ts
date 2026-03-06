@@ -67,9 +67,17 @@ function setupSessionDirectory(groupFolder: string): string {
     '.claude',
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
+  // Claude Agent SDK expects .claude/debug/ for writing debug logs — without it the
+  // container crashes with ENOENT (upstream #763)
+  fs.mkdirSync(path.join(groupSessionsDir, 'debug'), { recursive: true });
   // Ensure writable by container's node user
   try {
     fs.chownSync(groupSessionsDir, CONTAINER_UID, CONTAINER_GID);
+    fs.chownSync(
+      path.join(groupSessionsDir, 'debug'),
+      CONTAINER_UID,
+      CONTAINER_GID,
+    );
   } catch {}
 
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
