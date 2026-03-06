@@ -660,6 +660,16 @@ async function runQuery(
             GEMINI_API_KEY: sdkEnv.GEMINI_API_KEY || '',
           },
         },
+        ...(containerInput.chatJid.startsWith('slack:') ? {
+          tribe: {
+            command: 'node',
+            args: ['/opt/tribe-mcp/dist/index.js'],
+            env: {
+              TRIBE_CLIENT_ID: sdkEnv.TRIBE_CLIENT_ID || '',
+              TRIBE_CLIENT_SECRET: sdkEnv.TRIBE_CLIENT_SECRET || '',
+            },
+          },
+        } : {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],

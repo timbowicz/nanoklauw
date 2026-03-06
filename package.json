@@ -25,6 +25,8 @@
     "better-sqlite3": "^11.8.1",
     "chokidar": "^4.0.3",
     "cron-parser": "^5.5.0",
+    "imapflow": "^1.2.12",
+    "mailparser": "^3.9.3",
     "mammoth": "^1.11.0",
     "pdf-parse": "^1.1.4",
     "pino": "^9.6.0",
@@ -39,6 +41,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
+    "@types/mailparser": "^3.4.6",
     "@types/node": "^22.10.0",
     "@types/pdf-parse": "^1.1.5",
     "@types/qrcode-terminal": "^0.12.2",

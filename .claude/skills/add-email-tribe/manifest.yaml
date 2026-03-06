@@ -1,0 +1,42 @@
+skill: add-email-tribe
+version: 1.0.0
+description: "IMAP email polling + Tribe CRM integration for automatic email triage"
+core_version: 0.1.0
+adds:
+  - src/channels/email.ts
+  - src/channels/email.test.ts
+  - container/skills/email-triage/SKILL.md
+modifies:
+  - src/channels/index.ts
+  - src/config.ts
+  - src/db.ts
+  - container/agent-runner/src/index.ts
+  - groups/main/CLAUDE.md
+structured:
+  npm_dependencies:
+    imapflow: "^1.0.0"
+    mailparser: "^3.7.0"
+  npm_dev_dependencies:
+    "@types/mailparser": "^3.4.0"
+  env_additions:
+    - IMAP_HOST_1
+    - IMAP_USER_1
+    - IMAP_PASS_1
+    - IMAP_PORT_1
+    - IMAP_TLS_1
+    - IMAP_HOST_2
+    - IMAP_USER_2
+    - IMAP_PASS_2
+    - IMAP_PORT_2
+    - IMAP_TLS_2
+    - IMAP_HOST_3
+    - IMAP_USER_3
+    - IMAP_PASS_3
+    - IMAP_PORT_3
+    - IMAP_TLS_3
+    - EMAIL_POLL_INTERVAL
+    - TRIBE_CLIENT_ID
+    - TRIBE_CLIENT_SECRET
+conflicts: []
+depends: []
+test: "npx vitest run src/channels/email.test.ts"

@@ -72,6 +72,19 @@ Keep messages clean and readable for WhatsApp.
 
 ---
 
+## Email Triage
+
+Inbound emails from monitored IMAP accounts are delivered as messages starting with `[Email]`. When you receive one, follow the email-triage skill (`/workspace/skills/email-triage/SKILL.md`):
+
+1. Filter out spam/newsletters/auto-replies
+2. Look up the sender in Tribe CRM (`mcp__tribe__*` tools)
+3. Create notes, contacts, or update opportunities as appropriate
+4. Report a brief summary of what was processed
+
+## Tribe CRM
+
+You have access to Tribe CRM via MCP tools (`mcp__tribe__*`). Use these to search contacts, organisations, manage opportunities, and create notes. The tools are always available — use them when asked about CRM data or when processing emails.
+
 ## Admin Context
 
 This is the **main channel**, which has elevated privileges.

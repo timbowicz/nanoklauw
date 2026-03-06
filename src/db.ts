@@ -158,6 +158,14 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_chunks_document ON document_chunks(document_id);
     CREATE INDEX IF NOT EXISTS idx_chunks_group ON document_chunks(group_folder);
+
+    CREATE TABLE IF NOT EXISTS email_poll_state (
+      account_id TEXT NOT NULL,
+      folder TEXT NOT NULL,
+      last_uid INTEGER NOT NULL DEFAULT 0,
+      last_poll TEXT,
+      PRIMARY KEY (account_id, folder)
+    );
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -1078,6 +1086,32 @@ export function getAllAllowlisted(): Array<{
     approved_by: string;
     created_at: string;
   }>;
+}
+
+// --- Email poll state ---
+
+export function getEmailPollState(
+  accountId: string,
+  folder: string,
+): { last_uid: number; last_poll: string | null } | undefined {
+  return db
+    .prepare(
+      'SELECT last_uid, last_poll FROM email_poll_state WHERE account_id = ? AND folder = ?',
+    )
+    .get(accountId, folder) as
+    | { last_uid: number; last_poll: string | null }
+    | undefined;
+}
+
+export function setEmailPollState(
+  accountId: string,
+  folder: string,
+  lastUid: number,
+): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO email_poll_state (account_id, folder, last_uid, last_poll)
+     VALUES (?, ?, ?, ?)`,
+  ).run(accountId, folder, lastUid, new Date().toISOString());
 }
 
 // --- JSON migration ---

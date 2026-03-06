@@ -111,6 +111,12 @@ export const RESTRICTED_ALLOWED_DOMAINS = [
 ];
 export const RESTRICTED_DNS_REFRESH_MS = 5 * 60 * 1000; // 5 minutes
 
+// Email (IMAP) polling interval in ms
+export const EMAIL_POLL_INTERVAL = parseInt(
+  process.env.EMAIL_POLL_INTERVAL || '60000',
+  10,
+);
+
 // Slack configuration
 // SLACK_BOT_TOKEN, SLACK_APP_TOKEN, and SLACK_SIGNING_SECRET are read directly
 // by SlackChannel from .env via readEnvFile() to keep secrets off process.env.
