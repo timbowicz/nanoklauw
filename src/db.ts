@@ -71,6 +71,7 @@ function createSchema(database: Database.Database): void {
       prompt TEXT NOT NULL,
       schedule_type TEXT NOT NULL,
       schedule_value TEXT NOT NULL,
+      name TEXT,
       next_run TEXT,
       last_run TEXT,
       last_result TEXT,
@@ -79,6 +80,7 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_next_run ON scheduled_tasks(next_run);
     CREATE INDEX IF NOT EXISTS idx_status ON scheduled_tasks(status);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_task_name_group ON scheduled_tasks(group_folder, name) WHERE name IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS task_run_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -223,6 +225,17 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* columns already exist */
   }
+
+  // Add name column for task idempotency (upstream #783)
+  try {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN name TEXT`);
+  } catch {
+    /* column already exists */
+  }
+  // Partial unique index: only enforced when name is non-null
+  database.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_task_name_group ON scheduled_tasks(group_folder, name) WHERE name IS NOT NULL`,
+  );
 
   // Migrate raw Slack JIDs to slack: prefix format (idempotent).
   // Matches Slack channel/DM/group IDs: C, D, or G followed by uppercase alphanumeric,
@@ -762,13 +775,41 @@ export function getReactionStats(chatJid?: string): Array<{
     : (db.prepare(sql).all() as Result[]);
 }
 
+/**
+ * Create a scheduled task. If `name` is provided and a task with the same
+ * name already exists for this group, the existing task is updated (upsert)
+ * and its ID is returned. This prevents duplicate tasks across agent sessions
+ * (upstream #783).
+ */
 export function createTask(
   task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
-): void {
+): { id: string; existed: boolean } {
+  if (task.name) {
+    const existing = getTaskByName(task.group_folder, task.name);
+    if (existing) {
+      db.prepare(
+        `UPDATE scheduled_tasks
+         SET prompt = ?, schedule_type = ?, schedule_value = ?, context_mode = ?,
+             chat_jid = ?, next_run = ?, status = ?
+         WHERE id = ?`,
+      ).run(
+        task.prompt,
+        task.schedule_type,
+        task.schedule_value,
+        task.context_mode || 'isolated',
+        task.chat_jid,
+        task.next_run,
+        task.status,
+        existing.id,
+      );
+      return { id: existing.id, existed: true };
+    }
+  }
+
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, name, next_run, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -778,10 +819,23 @@ export function createTask(
     task.schedule_type,
     task.schedule_value,
     task.context_mode || 'isolated',
+    task.name || null,
     task.next_run,
     task.status,
     task.created_at,
   );
+  return { id: task.id, existed: false };
+}
+
+export function getTaskByName(
+  groupFolder: string,
+  name: string,
+): ScheduledTask | undefined {
+  return db
+    .prepare(
+      'SELECT * FROM scheduled_tasks WHERE group_folder = ? AND name = ? AND status != ?',
+    )
+    .get(groupFolder, name, 'completed') as ScheduledTask | undefined;
 }
 
 export function getTaskById(id: string): ScheduledTask | undefined {

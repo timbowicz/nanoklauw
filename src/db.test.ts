@@ -9,6 +9,7 @@ import {
   getMessagesSince,
   getNewMessages,
   getTaskById,
+  getTaskByName,
   setRegisteredGroup,
   storeChatMetadata,
   storeMessage,
@@ -388,6 +389,134 @@ describe('task CRUD', () => {
 
     deleteTask('task-3');
     expect(getTaskById('task-3')).toBeUndefined();
+  });
+
+  it('upserts task when name is provided and already exists', () => {
+    const result1 = createTask({
+      id: 'task-named-1',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'original prompt',
+      schedule_type: 'cron',
+      schedule_value: '0 3 * * *',
+      context_mode: 'isolated',
+      name: 'overnight-research',
+      next_run: '2024-06-01T03:00:00.000Z',
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+    expect(result1.existed).toBe(false);
+    expect(result1.id).toBe('task-named-1');
+
+    // Same name, same group — should upsert
+    const result2 = createTask({
+      id: 'task-named-2',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'updated prompt',
+      schedule_type: 'cron',
+      schedule_value: '0 4 * * *',
+      context_mode: 'isolated',
+      name: 'overnight-research',
+      next_run: '2024-06-01T04:00:00.000Z',
+      status: 'active',
+      created_at: '2024-01-02T00:00:00.000Z',
+    });
+    expect(result2.existed).toBe(true);
+    expect(result2.id).toBe('task-named-1'); // returns original ID
+
+    // Only one task should exist
+    const task = getTaskById('task-named-1');
+    expect(task).toBeDefined();
+    expect(task!.prompt).toBe('updated prompt');
+    expect(task!.schedule_value).toBe('0 4 * * *');
+
+    // The second ID should not have been created
+    expect(getTaskById('task-named-2')).toBeUndefined();
+  });
+
+  it('allows same name in different groups', () => {
+    createTask({
+      id: 'task-g1',
+      group_folder: 'group-a',
+      chat_jid: 'a@g.us',
+      prompt: 'task a',
+      schedule_type: 'cron',
+      schedule_value: '0 9 * * *',
+      context_mode: 'isolated',
+      name: 'daily-check',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+    const result = createTask({
+      id: 'task-g2',
+      group_folder: 'group-b',
+      chat_jid: 'b@g.us',
+      prompt: 'task b',
+      schedule_type: 'cron',
+      schedule_value: '0 9 * * *',
+      context_mode: 'isolated',
+      name: 'daily-check',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+    expect(result.existed).toBe(false); // different group, no conflict
+  });
+
+  it('creates separate tasks when name is not provided', () => {
+    createTask({
+      id: 'task-noname-1',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'same prompt',
+      schedule_type: 'cron',
+      schedule_value: '0 3 * * *',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+    const result = createTask({
+      id: 'task-noname-2',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'same prompt',
+      schedule_type: 'cron',
+      schedule_value: '0 3 * * *',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+    expect(result.existed).toBe(false);
+    // Both tasks should exist
+    expect(getTaskById('task-noname-1')).toBeDefined();
+    expect(getTaskById('task-noname-2')).toBeDefined();
+  });
+
+  it('getTaskByName returns matching task', () => {
+    createTask({
+      id: 'task-lookup',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'named task',
+      schedule_type: 'once',
+      schedule_value: '2024-06-01T00:00:00.000Z',
+      context_mode: 'isolated',
+      name: 'my-task',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    const found = getTaskByName('main', 'my-task');
+    expect(found).toBeDefined();
+    expect(found!.id).toBe('task-lookup');
+
+    // Wrong group returns undefined
+    expect(getTaskByName('other', 'my-task')).toBeUndefined();
   });
 });
 

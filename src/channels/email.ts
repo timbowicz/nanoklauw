@@ -1,7 +1,11 @@
 import { ImapFlow } from 'imapflow';
 import { simpleParser, ParsedMail } from 'mailparser';
 
-import { ASSISTANT_NAME, EMAIL_POLL_INTERVAL, MAIN_GROUP_FOLDER } from '../config.js';
+import {
+  ASSISTANT_NAME,
+  EMAIL_POLL_INTERVAL,
+  MAIN_GROUP_FOLDER,
+} from '../config.js';
 import { getEmailPollState, setEmailPollState } from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
@@ -110,7 +114,10 @@ export class EmailChannel implements Channel {
       try {
         await client.logout();
       } catch {
-        logger.debug({ accountId: id }, 'IMAP logout error (expected on shutdown)');
+        logger.debug(
+          { accountId: id },
+          'IMAP logout error (expected on shutdown)',
+        );
       }
     }
     this.connections.clear();
@@ -141,7 +148,11 @@ export class EmailChannel implements Channel {
         'Failed to initialize email account UID',
       );
       if (client) {
-        try { await client.logout(); } catch { /* ignore */ }
+        try {
+          await client.logout();
+        } catch {
+          /* ignore */
+        }
       }
     }
   }
@@ -168,10 +179,7 @@ export class EmailChannel implements Channel {
     // Check backoff
     const backoffMs = this.backoff.get(account.id) || 0;
     if (backoffMs > 0) {
-      this.backoff.set(
-        account.id,
-        Math.min(backoffMs * 2, MAX_BACKOFF_MS),
-      );
+      this.backoff.set(account.id, Math.min(backoffMs * 2, MAX_BACKOFF_MS));
     }
 
     try {
@@ -219,7 +227,11 @@ export class EmailChannel implements Channel {
           // Drop the broken connection
           const conn = this.connections.get(account.id);
           if (conn) {
-            try { await conn.logout(); } catch { /* ignore */ }
+            try {
+              await conn.logout();
+            } catch {
+              /* ignore */
+            }
             this.connections.delete(account.id);
           }
           this.backoff.set(
@@ -263,7 +275,10 @@ export class EmailChannel implements Channel {
 
         try {
           if (!msg.source) {
-            logger.warn({ accountId: account.id, uid: msg.uid }, 'Email has no source');
+            logger.warn(
+              { accountId: account.id, uid: msg.uid },
+              'Email has no source',
+            );
             continue;
           }
           const parsed = await simpleParser(msg.source, {});
