@@ -6,7 +6,6 @@ import * as sqliteVec from 'sqlite-vec';
 import {
   ASSISTANT_NAME,
   DATA_DIR,
-  MAX_MESSAGES_PER_QUERY,
   STORE_DIR,
 } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
@@ -80,7 +79,6 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_next_run ON scheduled_tasks(next_run);
     CREATE INDEX IF NOT EXISTS idx_status ON scheduled_tasks(status);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_task_name_group ON scheduled_tasks(group_folder, name) WHERE name IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS task_run_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
