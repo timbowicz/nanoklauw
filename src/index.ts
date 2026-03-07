@@ -37,6 +37,7 @@ import {
   getLatestUserMessage,
   getMessagesSince,
   getNewMessages,
+  getRegisteredGroup,
   getRouterState,
   initDatabase,
   setRegisteredGroup,
